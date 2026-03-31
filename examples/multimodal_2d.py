@@ -55,7 +55,7 @@ def cost_grid(resolution: int = 500):
 # ── MH baseline (simple loop, no SAMC) ──
 
 
-def run_mh(n_iters: int = 2000, temperature: float = 0.1, proposal_std: float = 0.02):
+def run_mh(n_iters: int = 1_000_000, temperature: float = 1.0, proposal_std: float = 0.25):
     """Run standard Metropolis-Hastings for comparison."""
     x = torch.zeros(2)
     fx, _ = cost(x)
@@ -122,7 +122,7 @@ def main():
     # ── Run MH baseline ──
     print()
     print("=" * 50)
-    print("Running Metropolis-Hastings (2K iterations)...")
+    print("Running Metropolis-Hastings (1M iterations)...")
     print("=" * 50)
     mh = run_mh()
     print(f"  Best energy: {mh['best_e']:.5f}")
