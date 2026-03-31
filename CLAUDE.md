@@ -35,7 +35,7 @@ python examples/gaussian_mixture.py
 - No unnecessary dependencies — torch only for core
 
 ## Reference Implementation
-`sample_code.py` in the project root is the ground truth SAMC implementation. Use it as:
+`reference/sample_code.py` is the ground truth SAMC implementation. Use it as:
 - **Algorithm reference** — the core SAMC loop, weight update, gain schedule, and acceptance ratio are all correct
 - **Regression test** — the new API should reproduce the same results (best energy, acceptance rate, weight convergence) on the same 2D multimodal cost function
 - **Test case** — port the `cost()` function and `run_samc()` parameters into the test suite as a known-good benchmark

@@ -4,9 +4,10 @@ Generates a comparison plot showing both implementations produce
 equivalent results on the 2D multimodal cost function.
 """
 
+import os
 import sys
 
-sys.path.insert(0, ".")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "reference"))
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -17,9 +18,10 @@ matplotlib.use("Agg")
 
 # ── Run sample_code.py reference ──
 # ── Run illuma-samc API ──
-from illuma_samc.sampler import SAMC
 from sample_code import cost
 from sample_code import run_samc as run_samc_ref
+
+from illuma_samc.sampler import SAMC
 
 
 def cost_api(z: torch.Tensor) -> tuple[torch.Tensor, bool]:
@@ -92,9 +94,10 @@ def main():
         ax.grid(alpha=0.2)
 
     plt.tight_layout()
-    plt.savefig("comparison_verification.png", dpi=200, bbox_inches="tight")
+    out = os.path.join(os.path.dirname(__file__), "comparison_verification.png")
+    plt.savefig(out, dpi=200, bbox_inches="tight")
     plt.close()
-    print("\nComparison plot saved to comparison_verification.png")
+    print(f"\nComparison plot saved to {out}")
 
 
 if __name__ == "__main__":

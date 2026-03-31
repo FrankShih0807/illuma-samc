@@ -3,6 +3,8 @@
 Shows SAMC exploring all modes while standard MH can get stuck.
 """
 
+import os
+
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -87,9 +89,10 @@ def main():
     axes[2].grid(alpha=0.2)
 
     plt.tight_layout()
-    plt.savefig("gaussian_mixture.png", dpi=200, bbox_inches="tight")
+    out = os.path.join(os.path.dirname(__file__), "gaussian_mixture.png")
+    plt.savefig(out, dpi=200, bbox_inches="tight")
     plt.close()
-    print("\nPlot saved to gaussian_mixture.png")
+    print(f"\nPlot saved to {out}")
 
 
 if __name__ == "__main__":

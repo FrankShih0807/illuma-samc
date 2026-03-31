@@ -44,7 +44,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = ["sample_code.py"]
+exclude = ["reference/sample_code.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

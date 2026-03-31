@@ -1,5 +1,18 @@
 # illuma-samc Work Log
 
+## [2026-03-31] Repo Organization Cleanup
+- **Phase:** maintenance
+- **Status:** done
+- **Summary:**
+  - Removed 4 stray PNGs from project root (regenerable outputs).
+  - Moved `sample_code.py` to `reference/sample_code.py` and updated all references (CLAUDE.md, pyproject.toml, examples/comparison_sample_code.py).
+  - Deleted `benchmarks/__init__.py` (nothing imports from benchmarks as a package) and `tests/test_placeholder.py` (redundant with real test suite).
+  - Updated .gitignore with patterns for logs, caches, and generated PNGs.
+  - Fixed all example scripts to save PNGs into their own directory instead of project root.
+- **Decisions made:** Examples save PNGs to `examples/` via `os.path.dirname(__file__)`. Reference script saves to `reference/`. Both directories' PNGs are gitignored.
+- **Blocked on:** Nothing.
+- **Affects:** None.
+
 ## [2026-03-30] Phase 1 MVP Complete
 - **Phase:** prototyping
 - **Status:** done

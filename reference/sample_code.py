@@ -12,6 +12,8 @@ Cost function (from cost.c):
   Domain: [-1.1, 1.1]^2, returns 1e100 outside.
 """
 
+import os
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -317,6 +319,7 @@ if __name__ == "__main__":
     axes[1, 2].grid(alpha=0.2)
 
     plt.tight_layout()
-    plt.savefig("samc_experiment.png", dpi=200, bbox_inches="tight")
+    out = os.path.join(os.path.dirname(__file__), "samc_experiment.png")
+    plt.savefig(out, dpi=200, bbox_inches="tight")
     plt.close()
-    print(f"\nPlot saved to samc_experiment.png")
+    print(f"\nPlot saved to {out}")

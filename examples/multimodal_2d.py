@@ -4,6 +4,7 @@ Runs both SAMC and a standard MH comparison on the 2D multimodal cost function.
 """
 
 import math
+import os
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -179,9 +180,10 @@ def main():
     axes[1, 2].set_title("SAMC Learned Weights")
 
     plt.tight_layout()
-    plt.savefig("multimodal_2d.png", dpi=200, bbox_inches="tight")
+    out = os.path.join(os.path.dirname(__file__), "multimodal_2d.png")
+    plt.savefig(out, dpi=200, bbox_inches="tight")
     plt.close()
-    print("\nPlot saved to multimodal_2d.png")
+    print(f"\nPlot saved to {out}")
 
 
 if __name__ == "__main__":

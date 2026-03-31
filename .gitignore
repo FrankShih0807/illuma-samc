@@ -1,12 +1,22 @@
 # Experiment outputs
 outputs/
+logs/
 
 # Python
 __pycache__/
 *.egg-info/
 *.pyc
 .eggs/
+.pytest_cache/
+.ruff_cache/
 
 # IDE
 .vscode/
 .idea/
+
+# Stray generated images at root
+/*.png
+
+# Generated example/reference outputs
+examples/*.png
+reference/*.png
