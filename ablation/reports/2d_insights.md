@@ -1,249 +1,309 @@
-# 2D Multimodal Ablation Study — Findings & Tuning Insights
+# 2D Multimodal Ablation Study: Insights Report
 
-> **Problem**: 2D multimodal cost function with global minimum E ≈ -8.1247
-> **Runs**: 161+ experiments across 13 ablation groups, 3 seeds each (42, 123, 456)
+> **Problem**: 2D multimodal cost function with global minimum at E = -8.1246
+> **Setup**: 500K iterations, 3 seeds (42, 123, 456) per configuration, 171 total runs
 > **Algorithms**: SAMC, Metropolis-Hastings (MH), Parallel Tempering (PT)
-> **Metrics**: Best energy, acceptance rate, bin flatness, **round-trip time**, **energy autocorrelation**
+> **Metrics**: Best energy found, acceptance rate, bin visit flatness (SAMC only)
 > **Date**: 2026-03-31
 
 ---
 
 ## Executive Summary
 
-SAMC is **highly robust** on this 2D problem — most hyperparameters have minimal impact on finding the global optimum. However, evaluating only "best energy found" is misleading. When we add **energy-space mixing metrics** (round-trip time, autocorrelation), parameters that looked identical on best energy show dramatically different mixing behavior.
+On the 2D multimodal benchmark, **SAMC is highly robust** -- nearly all configurations find the global minimum (E = -8.1246). The 2D problem is "easy" in the sense that the global optimum is reliably found, but the ablations reveal important differences in **exploration quality** (bin flatness) and **acceptance rate** that will matter for harder problems.
 
-**The two core SAMC evaluation criteria:**
-1. **Flat energy density** — bin visits should be uniform across the energy range
-2. **Energy-space mixing** — the sampler should rapidly traverse all energy levels (low round-trip time, low autocorrelation)
-
-**Critical finding**: `proposal_std=0.1` achieves the best mixing (RT=715, 699 trips) — **2x faster** than the default `std=0.05` (RT=1344, 361 trips). The gain schedule `log` completely fails to mix (0 round trips). These differences are invisible if you only look at best energy.
-
----
-
-## 1. Hyperparameter Sensitivity — With Mixing Metrics
-
-### Full Results Table (seed=42, 500K iterations)
-
-| Config | Best Energy | Acc Rate | Flatness | Round-Trip | # Trips | AC50 |
-|--------|------------|----------|----------|-----------|---------|------|
-| **Proposal Step Size** | | | | | | |
-| std=0.01 | -2.4469 | 0.811 | -0.916 | ∞ | 0 | 0.503 |
-| std=0.05 (default) | -8.1246 | 0.510 | 0.901 | 1,344 | 361 | 0.748 |
-| **std=0.1** | **-8.1246** | **0.346** | **0.993** | **715** | **699** | **0.598** |
-| std=0.5 | -8.1237 | 0.139 | 0.962 | 1,086 | 459 | 0.558 |
-| std=1.0 | -8.1173 | 0.079 | 0.915 | 2,045 | 243 | 0.692 |
-| std=2.0 | -8.1001 | 0.026 | 0.580 | 4,821 | 103 | 0.850 |
-| **Gain Schedule** | | | | | | |
-| 1/t | -8.1246 | 0.510 | 0.901 | 1,344 | 361 | 0.748 |
-| **log** | **-8.1246** | **0.357** | **-0.322** | **∞** | **0** | **0.686** |
-| ramp | -8.1246 | 0.510 | 0.901 | 1,344 | 361 | 0.748 |
-| **Gain t0** | | | | | | |
-| t0=100 | -8.1246 | 0.389 | 0.111 | ∞ | 0 | 0.782 |
-| t0=500 | -8.1246 | 0.444 | 0.049 | 162,065 | 3 | 0.167 |
-| t0=1000 (default) | -8.1246 | 0.510 | 0.901 | 1,344 | 361 | 0.748 |
-| t0=5000 | -8.1246 | 0.513 | 0.981 | 1,198 | 401 | 0.736 |
-| t0=10000 | -8.1246 | 0.504 | 0.985 | 1,345 | 361 | 0.740 |
-| **n_bins** | | | | | | |
-| bins=10 | -8.1247 | 0.496 | 0.948 | 1,674 | 296 | 0.747 |
-| bins=42 (default) | -8.1246 | 0.510 | 0.901 | 1,344 | 361 | 0.748 |
-| bins=150 | -8.1246 | 0.527 | 0.911 | 1,016 | 491 | 0.714 |
-
-### Updated Sensitivity Ranking
-
-| Rank | Parameter | Impact on Best Energy | Impact on Mixing | Recommended |
-|------|-----------|----------------------|-----------------|-------------|
-| 1 | **Energy range** | Critical (total failure if wrong) | Critical | Cover 95th percentile |
-| 2 | **proposal_std** | High (std=0.01 fails) | **Very High** (2x mixing diff) | 0.1 (not 0.05!) |
-| 3 | **Gain schedule** | Negligible (all find optimum) | **High** (`log` fails to mix!) | 1/t or ramp |
-| 4 | **Gain t0** | Negligible | **High** (t0<500 fails to mix) | 1K–10K |
-| 5 | **Partition type** | Moderate | N/A | uniform |
-| 6 | **n_bins** | Negligible | Moderate (150 bins mixes 1.6x faster) | 42–150 |
-| 7 | **Temperature** | Negligible | Low (see Section 6) | 1.0 |
+**Key findings**:
+1. **SAMC proposal_std** is the highest-impact parameter -- too small (0.01) causes SAMC to fail completely
+2. **Energy range** (e_max) is critical -- wrong range = dead sampler
+3. **Partition type** matters: uniform >> adaptive/quantile for this problem
+4. **Gain schedule** barely matters for energy found, but `log` has poor flatness
+5. MH and PT both find the global min reliably but lack SAMC's flat exploration guarantee
 
 ---
 
-## 2. Proposal Step Size — The Most Important Parameter
+## 1. Sensitivity Ranking
 
-![Mixing by Proposal Std](figures/mixing_proposal_std.png)
+Parameters ranked by impact on best energy found (most sensitive first):
 
-| std | Best E | Round-Trip | # Trips | AC50 | Interpretation |
-|-----|--------|-----------|---------|------|----------------|
-| 0.01 | -2.45 | ∞ | 0 | 0.50 | Stuck. Never traverses energy range. |
-| 0.05 | -8.12 | 1,344 | 361 | 0.75 | Works but slow mixing. |
-| **0.1** | **-8.12** | **715** | **699** | **0.60** | **Optimal: fast mixing + flat visits** |
-| 0.5 | -8.12 | 1,086 | 459 | 0.56 | Good mixing, slightly worse energy |
-| 1.0 | -8.12 | 2,045 | 243 | 0.69 | Low acceptance hurts mixing |
-| 2.0 | -8.10 | 4,821 | 103 | 0.85 | Very poor mixing, high autocorrelation |
-
-**Key insight**: `std=0.1` achieves **the best mixing by far** — 715 iters per round-trip vs 1,344 for the default. It has 699 round trips (nearly 2x the default's 361). This was invisible when only looking at best energy (both find -8.1246).
-
-**The sweet spot is ~25–35% acceptance rate**, not the commonly cited 44% (Roberts & Rosenthal). For SAMC specifically, slightly larger steps improve mixing because the weight correction compensates for the lower acceptance rate.
-
----
-
-## 3. Gain Schedule — `log` Fails to Mix
-
-![Mixing by Gain Schedule](figures/mixing_gain_schedule.png)
-
-| Gain | Best E | Flatness | Round-Trip | # Trips |
-|------|--------|----------|-----------|---------|
-| 1/t | -8.1246 | 0.901 | 1,344 | 361 |
-| **log** | **-8.1246** | **-0.322** | **∞** | **0** |
-| ramp | -8.1246 | 0.901 | 1,344 | 361 |
-
-**Critical finding**: All three schedules find the same best energy, but `log` has **negative flatness** (-0.32) and **zero round trips**. The `log` gain decays too quickly — it suppresses the weight update before the sampler has time to achieve uniform exploration. The sampler finds the optimum by luck but never achieves the flat-histogram property.
-
-**Recommendation**: Use `1/t` or `ramp`. Avoid `log` — it breaks SAMC's theoretical guarantee.
+| Rank | Parameter | Impact on Best Energy | Impact on Exploration |
+|------|-----------|----------------------|----------------------|
+| 1 | **SAMC energy range** (e_max) | CRITICAL -- e_max=-2 breaks sampler (E=0.0) | Tight range (e_max=0) best flatness; wide range degrades |
+| 2 | **SAMC proposal_std** | HIGH -- 0.01 fails (E=-3.56 avg) | 0.05-0.1 optimal for flatness (0.95-0.98) |
+| 3 | **SAMC partition type** | MODERATE -- adaptive/quantile worse (E ~ -7.4) | Uniform most consistent |
+| 4 | **MH temperature** | MODERATE -- T=0.1, 0.5 fail (E=-7.37) | N/A |
+| 5 | **SAMC gain t0** | LOW -- all find global min | t0=100 poor flatness (0.18); t0>=1000 good |
+| 6 | **SAMC gain schedule** | LOW -- all find global min | `log` poor flatness (-0.11); 1/t and ramp equal |
+| 7 | **SAMC n_bins** | LOW -- all find global min | All values give flatness >0.89 |
+| 8 | **SAMC n_chains** | LOW -- all find global min | 4-8 chains best flatness (0.99) |
+| 9 | **MH proposal_std** | LOW -- all find global min | N/A |
+| 10 | **PT n_replicas** | LOW -- all find global min | N/A |
+| 11 | **PT t_max** | LOW -- all find global min | N/A |
+| 12 | **PT swap_interval** | LOW -- all find global min | N/A |
 
 ---
 
-## 4. Gain t0 — Mixing Requires t0 ≥ 1000
+## 2. Detailed Results by Group
 
-![Mixing by Gain t0](figures/mixing_gain_t0.png)
+### 2.1 SAMC Gain Schedule
 
-| t0 | Flatness | Round-Trip | # Trips |
-|----|----------|-----------|---------|
-| 100 | 0.111 | ∞ | 0 |
-| 500 | 0.049 | 162,065 | 3 |
-| 1,000 | 0.901 | 1,344 | 361 |
-| 5,000 | 0.981 | 1,198 | 401 |
-| 10,000 | 0.985 | 1,345 | 361 |
+![Gain Schedule](../figures/samc_gain_schedule.png)
 
-**Sharp phase transition at t0=1000**: Below this threshold, the gain decays before weights converge, and the sampler essentially becomes MH. Above it, mixing is rapid and flatness is high. The improvement from 5K to 10K is marginal.
+| Schedule | Best Energy (mean +/- std) | Acceptance Rate | Bin Flatness |
+|----------|---------------------------|-----------------|--------------|
+| 1/t | -8.1246 +/- 0.0000 | 0.516 | 0.949 |
+| log | -8.1246 +/- 0.0000 | 0.372 | -0.108 |
+| ramp | -8.1246 +/- 0.0000 | 0.516 | 0.949 |
 
-**Tuning heuristic**: `t0 = max(1000, n_iters / 500)`. On 2D with 500K iters, t0=1000 is the minimum. Larger is safe but wastes warmup time.
+**Insight**: All schedules find the global minimum. However, the `log` schedule has significantly worse bin flatness (-0.108 vs 0.949) and lower acceptance rate (0.372 vs 0.516). The `1/t` and `ramp` schedules produce identical results on this problem.
 
----
+**Heuristic**: Use `ramp` or `1/t` as default. Avoid `log` -- it decays too slowly to achieve proper weight convergence within 500K iterations.
 
-## 5. SAMC Sensitivity Overview
+### 2.2 SAMC Gain t0
 
-![SAMC Sensitivity](figures/samc_sensitivity.png)
+![Gain t0](../figures/samc_gain_t0.png)
 
-### Energy Range — Total Failure Mode
+| t0 | Best Energy | Acceptance Rate | Bin Flatness |
+|----|-------------|-----------------|--------------|
+| 100 | -8.1246 | 0.412 | 0.177 |
+| 500 | -8.1246 | 0.484 | 0.550 |
+| 1000 | -8.1246 | 0.516 | 0.949 |
+| 5000 | -8.1246 | 0.511 | 0.973 |
+| 10000 | -8.1246 | 0.501 | 0.979 |
 
-| e_max | Best Energy | Acceptance | Flatness |
-|-------|-------------|------------|----------|
-| -2 | 0.0000 | 0.000 | 0.000 |
+**Insight**: Larger t0 = longer warmup = better flatness. t0=100 gives poor flatness (0.177) because the gain decays too fast. t0 >= 1000 yields good results, with diminishing returns above 5000.
+
+**Heuristic**: Set `t0 = n_iters / 500` to `n_iters / 100` as a starting point. For 500K iterations, t0 = 1000-5000 is ideal.
+
+### 2.3 SAMC Number of Bins
+
+![N Bins](../figures/samc_n_bins.png)
+
+| n_bins | Best Energy | Acceptance Rate | Bin Flatness |
+|--------|-------------|-----------------|--------------|
+| 10 | -8.1246 | 0.503 | 0.964 |
+| 20 | -8.1246 | 0.510 | 0.914 |
+| 42 | -8.1246 | 0.516 | 0.949 |
+| 80 | -8.1246 | 0.510 | 0.908 |
+| 150 | -8.1246 | 0.521 | 0.899 |
+
+**Insight**: Very robust parameter. All values find the global minimum with good flatness (>0.89). Fewer bins are slightly easier to flatten but provide coarser resolution.
+
+**Heuristic**: `n_bins = 20-80` is a safe range. 42 (default) is a good choice. Fewer bins for harder problems where visits are scarce.
+
+### 2.4 SAMC Energy Range
+
+![Energy Range](../figures/samc_energy_range.png)
+
+| e_max | Best Energy | Acceptance Rate | Bin Flatness |
+|-------|-------------|-----------------|--------------|
+| -2 | **0.0000** | **0.000** | **0.000** |
 | 0 | -8.1246 | 0.516 | 0.949 |
 | 5 | -8.1246 | 0.521 | 0.244 |
-| 10 | -8.1246 | 0.512 | N/A |
-| 20 | -8.1246 | 0.528 | N/A |
+| 10 | -8.1246 | 0.512 | -0.135 |
+| 20 | -8.1246 | 0.528 | -0.517 |
 
-With e_max=-2, the initial state's energy is above -2, so every proposal is out-of-range → 0% acceptance → dead sampler. e_max=0 gives the best flatness because bins concentrate on the interesting region. Wider ranges work but waste bins.
+**Insight**: This is the most critical SAMC parameter. Setting `e_max = -2` (below the typical energy range) completely breaks the sampler -- zero acceptance rate and no useful samples. Conversely, a too-wide range (e_max=20) finds the global min but has terrible flatness (-0.517) because many bins cover empty energy ranges.
 
-### Partition Type
+**Heuristic**: Set `e_max` to just above the energy of a random initialization. For the 2D problem, a random point has E ~ 0, so e_max=0 is perfect. Too tight is catastrophic; slightly too wide is recoverable but wastes bins.
 
-| Type | Best Energy | Flatness |
-|------|-------------|----------|
-| **uniform** | **-8.1246** | **0.949** |
-| adaptive | -7.3518 | 0.986 |
-| quantile | -7.4583 | 0.035 |
+### 2.5 SAMC Proposal Standard Deviation
 
-Uniform wins. Adaptive has great flatness but worse energy. Quantile is broken on this problem.
+![Proposal Std](../figures/samc_proposal_std.png)
 
-### Multi-Chain
+| proposal_std | Best Energy (mean +/- std) | Acceptance Rate | Bin Flatness |
+|--------------|---------------------------|-----------------|--------------|
+| 0.01 | **-3.5616 +/- 1.6421** | 0.815 | -0.662 |
+| 0.05 | -8.1246 +/- 0.0000 | 0.516 | 0.949 |
+| 0.1 | -8.1246 +/- 0.0000 | 0.345 | 0.978 |
+| 0.5 | -8.1220 +/- 0.0027 | 0.139 | 0.963 |
+| 1.0 | -8.1203 +/- 0.0026 | 0.078 | 0.899 |
+| 2.0 | -8.1063 +/- 0.0054 | 0.029 | 0.726 |
 
-| Chains | Best E | Flatness | Time |
-|--------|--------|----------|------|
-| 1 | -8.1246 | 0.949 | 27s |
-| 4 | -8.1246 | 0.995 | 49s |
-| 8 | -8.1246 | 0.992 | 56s |
+**Insight**: proposal_std=0.01 completely fails -- steps are too small to escape local minima within 500K iterations. Higher values (0.5-2.0) find near-optimal energies but with increasing variance and decreasing acceptance rates. The sweet spot is **0.05-0.1** with acceptance rates of 35-52%.
 
-4+ chains give near-perfect flatness at 2x cost.
+**Heuristic**: Target acceptance rate 30-50%. For 2D, proposal_std=0.05-0.1 is optimal. proposal_std=0.1 gives the best flatness (0.978).
+
+### 2.6 SAMC Partition Type
+
+![Partition Type](../figures/samc_partition_type.png)
+
+| Type | Best Energy (mean +/- std) | Acceptance Rate | Bin Flatness |
+|------|---------------------------|-----------------|--------------|
+| uniform | -8.1246 +/- 0.0000 | 0.516 | 0.949 |
+| adaptive | -7.3518 +/- 1.3118 | 0.537 | 0.986 |
+| quantile | -7.4583 +/- 0.5686 | 0.837 | 0.035 |
+
+**Insight**: Uniform partitions give the best and most consistent results. Adaptive partitions achieve the best flatness (0.986) but have high variance in energy -- the boundary recomputation likely destabilizes the sampler. Quantile partitions have very poor flatness (0.035) and inconsistent energy results.
+
+**Heuristic**: Use uniform partitions as default. Adaptive may be worth investigating for problems where the energy landscape is unknown, but it introduces instability.
+
+### 2.7 SAMC Multi-Chain
+
+![Multi-Chain](../figures/samc_multi_chain.png)
+
+| n_chains | Best Energy | Acceptance Rate | Bin Flatness |
+|----------|-------------|-----------------|--------------|
+| 1 | -8.1246 | 0.516 | 0.949 |
+| 2 | -8.1246 | 0.349 | 0.659 |
+| 4 | -8.1246 | 0.393 | 0.995 |
+| 8 | -8.1246 | 0.250 | 0.992 |
+
+**Insight**: All chain counts find the global minimum. Multi-chain (4-8) achieves the best flatness (0.99+). Acceptance rate drops with more chains due to shared weight updates. Note: n_chains=2 with seed=456 produced an inf energy (degenerate initialization), suggesting 2 chains is a fragile configuration.
+
+**Heuristic**: Single chain is sufficient for 2D. 4 chains gives near-perfect flatness at ~2x compute cost per step.
+
+### 2.8 MH Proposal Standard Deviation
+
+![MH Proposal Std](../figures/mh_proposal_std.png)
+
+| proposal_std | Best Energy (mean +/- std) | Acceptance Rate |
+|--------------|---------------------------|-----------------|
+| 0.01 | -8.1246 +/- 0.0000 | 0.843 |
+| 0.05 | -8.1246 +/- 0.0000 | 0.439 |
+| 0.1 | -8.1246 +/- 0.0001 | 0.258 |
+| 0.5 | -8.1237 +/- 0.0012 | 0.105 |
+| 1.0 | -8.1200 +/- 0.0055 | 0.062 |
+| 2.0 | -8.1136 +/- 0.0099 | 0.025 |
+
+**Insight**: Unlike SAMC, MH with proposal_std=0.01 still finds the global minimum (no weight correction needed for MH, so tiny steps are fine given enough iterations). Larger step sizes degrade energy quality slightly due to poor acceptance.
+
+**Heuristic**: MH optimal acceptance rate is ~23% (Gelman et al., 1997). proposal_std=0.1 (acceptance 25.8%) is closest.
+
+### 2.9 MH Temperature
+
+![MH Temperature](../figures/mh_temperature.png)
+
+| temperature | Best Energy (mean +/- std) | Acceptance Rate |
+|-------------|---------------------------|-----------------|
+| 0.1 | **-7.3659 +/- 1.3141** | 0.054 |
+| 0.5 | **-7.3659 +/- 1.3143** | 0.242 |
+| 1.0 | -8.1246 +/- 0.0000 | 0.439 |
+| 2.0 | -8.1246 +/- 0.0000 | 0.766 |
+| 5.0 | -8.1242 +/- 0.0001 | 0.904 |
+
+**Insight**: Low temperatures (0.1, 0.5) trap MH in local minima with high variance across seeds. T >= 1.0 reliably finds the global min. Higher temperatures (2.0, 5.0) accept too freely, slightly degrading energy quality.
+
+**Heuristic**: T=1.0 is the standard choice. Only increase temperature for very rugged landscapes.
+
+### 2.10 PT Number of Replicas
+
+![PT Replicas](../figures/pt_n_replicas.png)
+
+| n_replicas | Best Energy (mean +/- std) | Acceptance Rate | Total Energy Evals |
+|------------|---------------------------|-----------------|-------------------|
+| 2 | -8.1243 +/- 0.0003 | 0.764 | 1M |
+| 4 | -8.1246 +/- 0.0000 | 0.784 | 2M |
+| 8 | -8.1246 +/- 0.0001 | 0.784 | 4M |
+| 16 | -8.1246 +/- 0.0000 | 0.772 | 8M |
+| 32 | -8.1246 +/- 0.0000 | 0.747 | 16M |
+
+**Insight**: All replica counts find the global min. 2 replicas has marginally worse energy. Total compute scales linearly with n_replicas: 32 replicas is 16x more expensive than 2 for negligible improvement on 2D.
+
+**Heuristic**: 4-8 replicas is sufficient for 2D. More replicas only justified for harder problems with deeper energy barriers.
+
+### 2.11 PT Maximum Temperature
+
+![PT t_max](../figures/pt_t_max.png)
+
+| t_max | Best Energy (mean +/- std) | Acceptance Rate |
+|-------|---------------------------|-----------------|
+| 2 | -8.1246 +/- 0.0000 | 0.673 |
+| 5 | -8.1246 +/- 0.0000 | 0.763 |
+| 10 | -8.1246 +/- 0.0001 | 0.784 |
+| 20 | -8.1246 +/- 0.0000 | 0.797 |
+| 50 | -8.1245 +/- 0.0002 | 0.808 |
+
+**Insight**: Very robust on 2D. All values find the global minimum. Higher t_max increases the acceptance rate of the hottest replica.
+
+**Heuristic**: t_max=10 is a good default. Scale up for harder multimodal problems with deeper barriers.
+
+### 2.12 PT Swap Interval
+
+![PT Swap Interval](../figures/pt_swap_interval.png)
+
+| swap_interval | Best Energy (mean +/- std) | Acceptance Rate |
+|---------------|---------------------------|-----------------|
+| 1 | -8.1246 +/- 0.0000 | 0.837 |
+| 5 | -8.1246 +/- 0.0001 | 0.800 |
+| 10 | -8.1246 +/- 0.0001 | 0.784 |
+| 50 | -8.1246 +/- 0.0000 | 0.727 |
+| 100 | -8.1246 +/- 0.0000 | 0.678 |
+
+**Insight**: All values find the global minimum. More frequent swaps (interval=1) give higher acceptance rates.
+
+**Heuristic**: swap_interval=10 is a good default. Decrease for problems with deep local minima.
 
 ---
 
-## 6. SAMC Temperature
+## 3. Optimal Ranges Summary
 
-![Temperature Effect](figures/mixing_temperature.png)
-
-| Temperature | Best E | Flatness | Round-Trip | # Trips |
-|-------------|--------|----------|-----------|---------|
-| 0.5 | -8.1246 | 0.917 | 1,213 | 407 |
-| 1.0 | -8.1246 | 0.949 | 1,289 | 386 |
-| 2.0 | -8.1246 | 0.783 | 1,611 | 307 |
-| 5.0 | -8.1246 | 0.942 | 1,324 | 373 |
-| 10.0 | -8.1246 | 0.827 | 1,498 | 324 |
-
-**Temperature has minimal effect on 2D SAMC**. T=0.5 gives slightly faster mixing (1,213 vs 1,289 for T=1.0) but the difference is small. This makes sense — SAMC's weight correction already handles the exploration/exploitation tradeoff, making temperature redundant.
-
-**For harder models**: Temperature may matter more when the energy landscape has sharper barriers. Keep T=1.0 as default but test T=0.5 if mixing is slow.
-
----
-
-## 7. MH and PT Results
-
-### MH Temperature (critical parameter)
-
-![MH Temperature](figures/mh_temperature.png)
-
-| Temperature | Best Energy | Acceptance |
-|-------------|-------------|------------|
-| 0.1 | -7.3659 | 0.054 |
-| 0.5 | -7.3659 | 0.242 |
-| 1.0 | -8.1246 | 0.439 |
-| 2.0 | -8.1246 | 0.766 |
-| 5.0 | -8.1242 | 0.904 |
-
-T<1.0 traps MH in local minima. This is exactly what SAMC solves.
-
-### PT Replica Scaling
-
-![PT Scaling](figures/pt_scaling.png)
-
-| Replicas | Best E | Time |
-|----------|--------|------|
-| 2 | -8.1243 | 46s |
-| 4 | -8.1246 | 92s |
-| 8 | -8.1246 | 186s |
-| 16 | -8.1246 | 363s |
-
-PT scales linearly in cost. 4 replicas is sufficient on 2D.
+| Parameter | Optimal Value/Range | Rationale |
+|-----------|-------------------|-----------|
+| gain schedule | `ramp` or `1/t` | Best flatness; avoid `log` |
+| gain t0 | 1000-5000 (for 500K iters) | Rule: t0 ~ n_iters/500 to n_iters/100 |
+| n_bins | 20-80 | Robust; 42 is a safe default |
+| e_max | Just above random init energy | Too tight = broken; too wide = wasted bins |
+| SAMC proposal_std | 0.05-0.1 | Target 30-50% acceptance rate |
+| partition_type | uniform | Most consistent and reliable |
+| n_chains | 1 (or 4 for better exploration) | Multi-chain improves flatness to 0.99+ |
+| MH proposal_std | 0.05-0.1 | Target ~23% acceptance rate |
+| MH temperature | 1.0 | Lower traps in local minima |
+| PT n_replicas | 4-8 | More gives diminishing returns |
+| PT t_max | 5-20 | Scale up for harder problems |
+| PT swap_interval | 5-10 | Balance swap frequency vs exploration |
 
 ---
 
-## 8. Flatness vs Mixing Speed
+## 4. Tuning Heuristics (Rules of Thumb)
 
-![Summary](figures/mixing_summary.png)
+1. **Energy range is king**: Getting e_min/e_max wrong breaks SAMC completely. When in doubt, use a wider range and accept worse flatness. A short diagnostic run (10K iterations) can help determine the range.
 
-This scatter plot reveals the tradeoff: the best configurations cluster in the **upper-left** (high flatness, low round-trip time). `std_0.1` is the clear winner — best in both dimensions. `bins_150` also shows good mixing (more bins = finer energy resolution = faster detection of round-trips).
+2. **proposal_std determines acceptance rate**: For SAMC, target 30-50%. For MH, target ~23%. If acceptance is <10%, reduce step size; if >80%, increase it.
 
----
+3. **Gain t0 scales with n_iters**: Use t0 = n_iters/100 for fast convergence, t0 = n_iters/500 for more exploration. The gain just needs to be non-negligible for long enough to flatten the weights.
 
-## 9. Algorithm Comparison
+4. **n_bins is forgiving**: 20-80 all work well. Use fewer bins if you're running fewer iterations (need enough visits per bin for weight learning).
 
-| Metric | SAMC (tuned) | MH (tuned) | PT (4 rep) |
-|--------|-------------|-----------|-----------|
-| Best energy | -8.1246 | -8.1246 | -8.1246 |
-| Acceptance | 34.6% | 43.9% | 78.4% |
-| Wall time | 27s | 22s | 92s |
-| Round-trips | 699 | N/A | N/A |
-| Flatness | 0.993 | N/A | N/A |
-| Compute cost | 1x | 1x | 4x |
-| Flat exploration? | Yes | No | Via hot replicas |
+5. **Stick with uniform partitions**: Adaptive and quantile partitions add complexity without clear benefit on well-characterized problems.
 
-**SAMC with `std=0.1` is the recommended default** — best mixing, excellent flatness, cheapest compute.
+6. **ramp and 1/t gain schedules are equivalent at 500K iters**: Avoid `log` -- it consistently produces poor flatness.
 
 ---
 
-## 10. Tuning Heuristics for Harder Models
+## 5. SAMC vs MH vs PT Comparison
 
-1. **Energy range first**: Short MH warmup → set e_max at 95th percentile of warmup energies
-2. **proposal_std**: Target **25–35% acceptance** (not the classical 44%). Start with `std = 0.1 * domain_width / sqrt(dim)`
-3. **Gain schedule**: Use `1/t` or `ramp`. **Never use `log`** — it kills mixing
-4. **t0**: Set `t0 = max(1000, n_iters / 500)`. Below this, SAMC degrades to MH
-5. **n_bins**: 42–150. More bins give slightly better mixing
-6. **Partition**: Always uniform
-7. **Temperature**: 1.0 default. Try 0.5 if mixing is slow
-8. **Multi-chain**: 4 chains for production (near-perfect flatness)
-9. **Evaluate on**: Round-trip time and flatness, **not just best energy**
+### Where SAMC Wins
+- **Exploration guarantee**: SAMC achieves flat bin visits (flatness >0.9), meaning it samples all energy regions equally. MH and PT have no such guarantee.
+- **Robustness to local minima**: SAMC with proper energy range finds the global minimum regardless of initialization. MH at low temperature gets trapped.
+- **Weight adaptation**: SAMC learns which energy regions are undersampled and self-corrects.
+
+### Where MH Wins
+- **Simplicity**: No energy range or partition parameters to tune. Just proposal_std and temperature.
+- **Low sensitivity to proposal_std**: MH finds the global minimum even with proposal_std=0.01, while SAMC fails.
+- **Speed**: No weight update overhead per iteration.
+
+### Where PT Wins
+- **Very robust**: Finds the global minimum across all parameter settings tested.
+- **Temperature mixing**: Naturally escapes local minima through replica exchange.
+- **No energy range tuning**: Unlike SAMC, doesn't require knowing the energy range a priori.
+
+### Where PT Loses
+- **Compute cost**: n_replicas * n_iters energy evaluations. 8 replicas = 8x more compute than SAMC/MH for similar energy on 2D.
+- **Diminishing returns**: On 2D, 2 replicas is nearly as good as 32.
+
+### Bottom Line for 2D
+On this easy 2D problem, **all three algorithms find the global minimum reliably** with proper tuning. The differentiator is exploration quality: SAMC provably flattens its energy histogram, which will matter for harder problems. PT achieves similar reliability through temperature mixing but at higher compute cost. MH is cheapest but provides no exploration guarantees and fails at low temperature.
 
 ---
 
-## Appendix: Metric Definitions
+## 6. Implications for Higher Dimensions
 
-- **Bin Flatness**: `1 - std(bin_counts) / mean(bin_counts)`. 1.0 = perfectly uniform visits.
-- **Round-Trip Time**: Mean iterations per full energy traverse (low → high → low). Lower = faster mixing.
-- **# Round Trips**: Total complete energy traverses in 500K iterations. Higher = better.
-- **AC50**: Energy autocorrelation at lag 50. Lower = faster decorrelation.
-- **∞ (no trips)**: Sampler never completed a full energy traverse — failed to mix.
+Based on these 2D results, we predict for harder problems:
+
+1. **SAMC proposal_std and energy range will remain critical** -- these directly control the sampler's ability to move between energy regions.
+2. **Gain schedule may matter more** -- on harder problems where 500K iterations isn't enough, the decay rate will determine whether SAMC converges its weights.
+3. **Multi-chain SAMC may become necessary** -- single chain may fail to explore all modes in higher dimensions.
+4. **PT will need more replicas** -- energy barriers grow with dimension, requiring finer temperature ladders.
+5. **n_bins scaling** -- may need to scale with problem complexity, not just dimension.
+
+These hypotheses will be tested in Steps 25-27.

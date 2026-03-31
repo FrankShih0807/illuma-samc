@@ -74,16 +74,21 @@ def print_summary(groups: dict[str, list[dict]]):
 
     for key, runs in sorted(groups.items()):
         n = len(runs)
-        best_energies = [r["best_energy"] for r in runs]
+        best_energies = [r["best_energy"] for r in runs if r["best_energy"] != float("inf")]
         acc_rates = [r["acceptance_rate"] for r in runs]
         flatness = [r.get("bin_flatness", float("nan")) for r in runs]
 
         import statistics
 
-        mean_e = statistics.mean(best_energies)
-        std_e = statistics.stdev(best_energies) if n > 1 else 0.0
+        if not best_energies:
+            mean_e = float("inf")
+            std_e = 0.0
+        else:
+            mean_e = statistics.mean(best_energies)
+            std_e = statistics.stdev(best_energies) if len(best_energies) > 1 else 0.0
         mean_acc = statistics.mean(acc_rates)
-        mean_flat = statistics.mean([f for f in flatness if f == f])  # skip NaN
+        valid_flat = [f for f in flatness if f == f]  # skip NaN
+        mean_flat = statistics.mean(valid_flat) if valid_flat else float("nan")
 
         print(
             f"{key:<50} {n:>3} {mean_e:>14.4f} {std_e:>13.4f} {mean_acc:>10.3f} {mean_flat:>10.3f}"
@@ -129,9 +134,13 @@ def plot_group(groups: dict[str, list[dict]], group_dir: str | Path):
     stds = []
     for key in settings:
         runs = groups[key]
-        energies = [r["best_energy"] for r in runs]
-        means.append(statistics.mean(energies))
-        stds.append(statistics.stdev(energies) if len(energies) > 1 else 0.0)
+        energies = [r["best_energy"] for r in runs if r["best_energy"] != float("inf")]
+        if not energies:
+            means.append(0.0)
+            stds.append(0.0)
+        else:
+            means.append(statistics.mean(energies))
+            stds.append(statistics.stdev(energies) if len(energies) > 1 else 0.0)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 

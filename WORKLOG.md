@@ -1,5 +1,18 @@
 # illuma-samc Work Log
 
+## [2026-03-31] Step 24: 2D Multimodal Ablations (Phase 3B)
+- **Phase:** prototyping
+- **Status:** done
+- **Summary:**
+  - Ran all 12 ablation groups (171 total runs) on 2D multimodal: SAMC gain schedule, gain t0, n_bins, energy range, proposal_std, partition type, multi-chain; MH proposal_std, temperature; PT n_replicas, t_max, swap_interval. Each with 3 seeds (42, 123, 456) at 500K iterations.
+  - Created `ablation/run_2d_ablations.py` runner script with parallel execution support.
+  - Ran `ablation/analyze.py` on all 12 groups, generating CSV summaries and comparison plots.
+  - Fixed bugs in analyze.py: handle missing bin_flatness for MH/PT results, handle inf energies in stdev computation.
+  - Wrote comprehensive `ablation/reports/2d_insights.md` with sensitivity ranking, optimal ranges, tuning heuristics, and SAMC vs MH vs PT comparison.
+- **Decisions made:** proposal_std (0.05-0.1) and energy range are the most critical SAMC parameters. Uniform partitions outperform adaptive/quantile. The `log` gain schedule should be avoided (poor flatness). All three algorithms find the global min on 2D, but SAMC provides unique flat exploration guarantee.
+- **Blocked on:** Nothing.
+- **Affects:** Insights feed into Steps 25-27 for higher-dimensional ablations.
+
 ## [2026-03-31] Step 23: Infrastructure Prep (Phase 3A)
 - **Phase:** prototyping
 - **Status:** done

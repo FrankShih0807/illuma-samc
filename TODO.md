@@ -227,19 +227,19 @@ For UX improvements and input validation, the same pipeline applies:
 ### Step 24: 2D Multimodal Ablations (3B) — cheapest, full sweeps
 > Run ALL ablation groups on 2D only. Each group varies ONE factor, 3 seeds each.
 
-- [ ] SAMC gain schedule: 1/t, log, ramp (9 runs)
-- [ ] SAMC gain t0: 100, 500, 1K, 5K, 10K with gain=1/t (15 runs)
-- [ ] SAMC n_bins: 10, 20, 42, 80, 150 (15 runs)
-- [ ] SAMC energy range: e_max in {-2, 0, 5, 10, 20} with e_min=-8.2 (15 runs)
-- [ ] SAMC proposal_std: 0.01, 0.05, 0.1, 0.5, 1.0, 2.0 (18 runs)
-- [ ] SAMC partition type: uniform, adaptive, quantile (9 runs)
-- [ ] SAMC multi-chain: 1, 2, 4, 8 chains (12 runs)
-- [ ] MH proposal_std: 0.01, 0.05, 0.1, 0.5, 1.0, 2.0 (18 runs)
-- [ ] MH temperature: 0.1, 0.5, 1.0, 2.0, 5.0 (15 runs)
-- [ ] PT n_replicas: 2, 4, 8, 16, 32 (15 runs)
-- [ ] PT t_max: 2, 5, 10, 20, 50 (15 runs)
-- [ ] PT swap_interval: 1, 5, 10, 50, 100 (15 runs)
-- [ ] **Deliverable**: `ablation/reports/2d_insights.md` — sensitivity ranking, optimal ranges, tuning heuristics, SAMC vs MH vs PT analysis
+- [x] SAMC gain schedule: 1/t, log, ramp (9 runs)
+- [x] SAMC gain t0: 100, 500, 1K, 5K, 10K with gain=1/t (15 runs)
+- [x] SAMC n_bins: 10, 20, 42, 80, 150 (15 runs)
+- [x] SAMC energy range: e_max in {-2, 0, 5, 10, 20} with e_min=-8.2 (15 runs)
+- [x] SAMC proposal_std: 0.01, 0.05, 0.1, 0.5, 1.0, 2.0 (18 runs)
+- [x] SAMC partition type: uniform, adaptive, quantile (9 runs)
+- [x] SAMC multi-chain: 1, 2, 4, 8 chains (12 runs)
+- [x] MH proposal_std: 0.01, 0.05, 0.1, 0.5, 1.0, 2.0 (18 runs)
+- [x] MH temperature: 0.1, 0.5, 1.0, 2.0, 5.0 (15 runs)
+- [x] PT n_replicas: 2, 4, 8, 16, 32 (15 runs)
+- [x] PT t_max: 2, 5, 10, 20, 50 (15 runs)
+- [x] PT swap_interval: 1, 5, 10, 50, 100 (15 runs)
+- [x] **Deliverable**: `ablation/reports/2d_insights.md` — sensitivity ranking, optimal ranges, tuning heuristics, SAMC vs MH vs PT analysis
 
 ### Step 25: Rosenbrock 2D Ablations (3C) — cheap, different geometry
 > Apply 2D heuristics as starting defaults. Narrower sweeps guided by Step 24 insights.
