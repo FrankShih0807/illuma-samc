@@ -66,19 +66,19 @@
 ## Phase 2: GPU & Benchmarks
 
 ### Step 9: GPU Support
-- [ ] Ensure single-chain SAMC runs on CUDA when `device="cuda"` — energy_fn, proposals, and state all on GPU. Theta weights stay on CPU (small vector, updated every step).
-- [ ] NOTE: SAMC is inherently sequential (weight update depends on current theta). Do NOT implement naive batch parallelism — it would break correctness.
-- [ ] Implement **parallel chains with shared weights**: run N chains simultaneously, batch the energy evaluation (the expensive part), but synchronize theta updates after each step. API: `sampler.run(n_steps=10000, x0=torch.randn(N, dim))` where N is number of chains.
-- [ ] Each chain proposes independently, energy is evaluated as a batch, then each chain's accept/reject and weight update happens sequentially on the shared theta.
-- [ ] Return shape: `(N, n_steps, dim)` for multi-chain, `(n_steps, dim)` for single chain.
-- [ ] Add tests: verify GPU results match CPU results (same seed), verify multi-chain shared weights converge same as single chain.
+- [x] Ensure single-chain SAMC runs on CUDA when `device="cuda"` — energy_fn, proposals, and state all on GPU. Theta weights stay on CPU (small vector, updated every step).
+- [x] NOTE: SAMC is inherently sequential (weight update depends on current theta). Do NOT implement naive batch parallelism — it would break correctness.
+- [x] Implement **parallel chains with shared weights**: run N chains simultaneously, batch the energy evaluation (the expensive part), but synchronize theta updates after each step. API: `sampler.run(n_steps=10000, x0=torch.randn(N, dim))` where N is number of chains.
+- [x] Each chain proposes independently, energy is evaluated as a batch, then each chain's accept/reject and weight update happens sequentially on the shared theta.
+- [x] Return shape: `(N, n_steps, dim)` for multi-chain, `(n_steps, dim)` for single chain.
+- [x] Add tests: verify GPU results match CPU results (same seed), verify multi-chain shared weights converge same as single chain.
 
 ### Step 9.5: Verify Correctness Against sample_code.py
-- [ ] Run `python sample_code.py` and save the output PNG (`samc_experiment.png`) as the ground truth
-- [ ] Run `python examples/multimodal_2d.py` with the same parameters (1M iterations, 42 bins, same gain schedule)
-- [ ] Compare results: the illuma-samc version MUST achieve flat bin visit histogram (all bins visited roughly equally) and find the global minimum (best energy ≈ -8.2)
-- [ ] If bin visits are NOT flat or best energy is significantly worse, debug and fix the core SAMC loop — the weight update or acceptance ratio is likely wrong
-- [ ] Save comparison plots side by side
+- [x] Run `python sample_code.py` and save the output PNG (`samc_experiment.png`) as the ground truth
+- [x] Run `python examples/multimodal_2d.py` with the same parameters (1M iterations, 42 bins, same gain schedule)
+- [x] Compare results: the illuma-samc version MUST achieve flat bin visit histogram (all bins visited roughly equally) and find the global minimum (best energy ≈ -8.2)
+- [x] If bin visits are NOT flat or best energy is significantly worse, debug and fix the core SAMC loop — the weight update or acceptance ratio is likely wrong
+- [x] Save comparison plots side by side
 
 ### Step 10: Benchmarks
 - [ ] Create `benchmarks/vs_mh_pt.py` comparing SAMC vs MH vs parallel tempering on:
