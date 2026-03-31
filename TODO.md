@@ -73,6 +73,13 @@
 - [ ] Return shape: `(N, n_steps, dim)` for multi-chain, `(n_steps, dim)` for single chain.
 - [ ] Add tests: verify GPU results match CPU results (same seed), verify multi-chain shared weights converge same as single chain.
 
+### Step 9.5: Verify Correctness Against sample_code.py
+- [ ] Run `python sample_code.py` and save the output PNG (`samc_experiment.png`) as the ground truth
+- [ ] Run `python examples/multimodal_2d.py` with the same parameters (1M iterations, 42 bins, same gain schedule)
+- [ ] Compare results: the illuma-samc version MUST achieve flat bin visit histogram (all bins visited roughly equally) and find the global minimum (best energy ≈ -8.2)
+- [ ] If bin visits are NOT flat or best energy is significantly worse, debug and fix the core SAMC loop — the weight update or acceptance ratio is likely wrong
+- [ ] Save comparison plots side by side
+
 ### Step 10: Benchmarks
 - [ ] Create `benchmarks/vs_mh_pt.py` comparing SAMC vs MH vs parallel tempering on:
   - 2D multimodal cost function from `sample_code.py`
