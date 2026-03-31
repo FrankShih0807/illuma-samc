@@ -82,6 +82,105 @@ def _multimodal_energy(x: torch.Tensor) -> torch.Tensor:
     )
 
 
+class TestUXWarnings:
+    def test_warn_out_of_range_initial_state(self):
+        import pytest
+
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+        )
+        x0 = torch.tensor([100.0, 100.0])  # energy = 10000, way above e_max
+        with pytest.warns(UserWarning, match="outside partition range"):
+            sampler.run(n_steps=10, x0=x0, progress=False)
+
+    def test_warn_low_acceptance_rate(self):
+        import pytest
+
+        # Use tiny proposal_std so almost nothing gets accepted in 10 steps
+        # but to guarantee low acceptance, use a custom energy that makes
+        # every proposal worse
+        def hard_energy(x: torch.Tensor) -> torch.Tensor:
+            # Steep well at origin — large proposal_std means we always propose uphill
+            return 100.0 * torch.sum(x**2)
+
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=hard_energy,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=500.0,
+            proposal_std=10.0,  # large steps on steep energy → low acceptance
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        with pytest.warns(UserWarning, match="acceptance rate"):
+            sampler.run(n_steps=100, progress=False)
+
+    def test_seed_parameter_reproducibility(self):
+        sampler = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+        )
+        r1 = sampler.run(n_steps=200, seed=42, progress=False)
+        r2 = sampler.run(n_steps=200, seed=42, progress=False)
+        assert torch.allclose(r1.samples, r2.samples)
+        assert torch.allclose(r1.energy_history, r2.energy_history)
+
+    def test_all_partitions_have_edges(self):
+        from illuma_samc.partitions import (
+            AdaptivePartition,
+            Partition,
+            QuantilePartition,
+            UniformPartition,
+        )
+
+        u = UniformPartition(0.0, 10.0, 5)
+        assert isinstance(u.edges, torch.Tensor)
+
+        a = AdaptivePartition(0.0, 10.0, 5)
+        assert isinstance(a.edges, torch.Tensor)
+
+        q = QuantilePartition(torch.linspace(0, 10, 100), 5)
+        assert isinstance(q.edges, torch.Tensor)
+
+        # Check that Partition base class has edges as abstract property
+        assert hasattr(Partition, "edges")
+
+    def test_n_bins_alias_in_samc(self):
+        torch.manual_seed(42)
+        s1 = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_partitions=10,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+        )
+        torch.manual_seed(42)
+        s2 = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_bins=10,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+        )
+        r1 = s1.run(n_steps=100, progress=False)
+        r2 = s2.run(n_steps=100, progress=False)
+        assert torch.allclose(r1.samples, r2.samples)
+
+
 class TestInputValidation:
     def test_e_min_ge_e_max(self):
         import pytest

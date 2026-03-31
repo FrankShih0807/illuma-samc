@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from typing import Callable
 
@@ -279,6 +280,16 @@ class SAMC:
         fx, in_region = self._compute_energy(x)
         fx_val = fx.item()
 
+        # Warn if initial state is out of partition range
+        if self._partition.assign(fx) < 0:
+            e_edges = self._partition.edges
+            warnings.warn(
+                f"Initial energy {fx_val:.4g} is outside partition range "
+                f"[{e_edges[0].item():.4g}, {e_edges[-1].item():.4g}]. "
+                f"Chain may not mix.",
+                stacklevel=3,
+            )
+
         # Theta (log weights) and counts
         theta = torch.zeros(self._n_partitions, device=device, dtype=torch.float64)
         counts = torch.zeros(self._n_partitions, device=device, dtype=torch.float64)
@@ -414,6 +425,18 @@ class SAMC:
         # Initialize states — shape (N, dim)
         x = x0.to(device).clone()
         fx, in_region = self._compute_energy_batch(x)  # (N,), (N,)
+
+        # Warn if any initial state is out of partition range
+        for c in range(n_chains):
+            if self._partition.assign(fx[c]) < 0:
+                e_edges = self._partition.edges
+                warnings.warn(
+                    f"Initial energy {fx[c].item():.4g} is outside partition range "
+                    f"[{e_edges[0].item():.4g}, {e_edges[-1].item():.4g}]. "
+                    f"Chain may not mix.",
+                    stacklevel=3,
+                )
+                break  # one warning is enough
 
         # Shared theta on CPU (small vector, updated every step)
         theta = torch.zeros(self._n_partitions, dtype=torch.float64)
