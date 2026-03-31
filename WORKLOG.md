@@ -12,6 +12,19 @@
 - **Blocked on:** Nothing — Phase 1 complete, ready for Frank's review.
 - **Affects:** None.
 
+## [2026-03-31] Phase 2.5: Benchmark fixes and experiment infrastructure (Steps 12-17)
+- **Phase:** generalizing
+- **Status:** done
+- **Summary:**
+  - Step 12: Removed ESS columns from README benchmark table (ESS was already removed from code). Updated benchmark numbers to current results (proposal_std=0.05 for 2D, proposal_std=1.0 for 10D, e_max=20 for 10D SAMC). Regenerated all benchmark plots.
+  - Step 13: Added "Energy Evals" column to benchmark table to make PT's 8x compute cost transparent. Updated analysis text to highlight compute fairness.
+  - Step 14: Created `train.py` CLI with argparse for running single experiments. Supports --algo (samc/mh/pt), --model (2d/10d), all hyperparams as CLI args. Reuses energy functions and runners from benchmarks/vs_mh_pt.py.
+  - Step 15: Created YAML config system in `configs/` with tuned defaults per model. train.py auto-loads matching config, CLI args override YAML values.
+  - Step 16: Added `compare_results.py` to load and rank all runs for a model. Output structure: `outputs/<model>/<algo>/<timestamp>/` with config.yaml, results.json, and diagnostic plots. Added .gitignore for outputs/.
+- **Decisions made:** Added PyYAML as a core dependency. Created benchmarks/__init__.py to allow importing energy functions/runners. Used UTC timestamps for run directories.
+- **Blocked on:** Nothing.
+- **Affects:** None.
+
 ## [2026-03-30] Phase 2 Complete: GPU, Parallel Chains, Verification, Benchmarks
 - **Phase:** generalizing
 - **Status:** done

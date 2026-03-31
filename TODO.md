@@ -88,7 +88,7 @@
 - [x] Generate comparison plots (save as PNG)
 - [x] Add benchmark results to README
 
-## Phase 2.5: Demo & Visualization
+## Phase 2.5: Demo, Visualization & Experiment Infrastructure
 
 ### Step 11: Comprehensive Demo & README Visuals
 - [x] Run `python sample_code.py` and verify `samc_experiment.png` shows flat bin visits and global minimum found
@@ -103,3 +103,171 @@
 - [x] Add a "Why SAMC?" section to README showing the SAMC vs MH comparison: "MH gets stuck. SAMC doesn't."
 - [x] Run full test suite: `pytest -v` and ensure 100% pass
 - [x] Commit and push
+
+### Step 12: Fix README Benchmark Section
+- [x] Remove ESS column from the benchmark results table in README.md
+- [x] Update benchmark numbers with current results (proposal_std=0.05 for 2D, e_max=20 for 10D)
+- [x] Remove ESS-related "key takeaways" text
+- [x] Rerun `python benchmarks/vs_mh_pt.py` to regenerate plots, verify README matches
+
+### Step 13: Normalize PT Benchmark Fairness
+- [x] PT runs 8 replicas per iteration = 8x energy evaluations vs SAMC/MH
+- [x] Add "Total Energy Evals" column to benchmark table to make compute cost transparent
+- [x] Update README table and analysis text accordingly
+- [x] Rerun benchmarks and verify
+
+### Step 14: Experiment CLI (`train.py`)
+- [x] Create `train.py` at project root with argparse CLI
+- [x] `python train.py --algo samc --model 2d --proposal_std 0.05 ...`
+- [x] Supported `--algo` choices: `samc`, `mh`, `pt`
+- [x] Supported `--model` choices: `2d`, `10d` (extensible to new models)
+- [x] All hyperparams as CLI args (proposal_std, n_iters, n_partitions, e_min, e_max, gain schedule, etc.)
+- [x] CLI args override YAML config defaults (Step 15)
+- [x] Each invocation runs a single experiment — cluster-ready (one run per command)
+- [x] Prints summary metrics on completion
+
+### Step 15: YAML Config System
+- [x] Create `configs/` directory
+- [x] `configs/samc.yaml` — default tuned settings keyed by model
+- [x] `configs/mh.yaml` — MH defaults keyed by model (proposal_std, temperature, n_iters)
+- [x] `configs/pt.yaml` — PT defaults keyed by model (n_replicas, t_min, t_max, swap_interval, etc.)
+- [x] `train.py` loads the appropriate YAML, then CLI args override any matching keys
+
+### Step 16: Output & Results Management
+- [x] Output folder structure: `outputs/<model>/<algo>/<timestamp>/`
+- [x] Each run saves into its timestamped folder:
+  - `config.yaml` — full config snapshot (YAML defaults + CLI overrides merged)
+  - `results.json` — best energy, acceptance rate, wall time, total energy evals
+  - Diagnostic plots (energy trace, weight trajectory if SAMC, etc.)
+- [x] Comparison utility: load all runs for a given model, rank by best energy, print comparison table
+- [x] Example usage: `python compare_results.py --model 2d` prints ranked table of all runs
+
+### Step 17: Update WORKLOG
+- [x] Log partition boundary fix, ESS removal, benchmark tuning from current session
+- [x] Log experiment infrastructure additions
+
+## Phase 2.75: Bug Fixes, Tests & UX (after Phase 2.5)
+
+> Address bugs, missing tests, and UX issues found during code review.
+
+### Bug-Fix Procedure
+
+Every bug follows this pipeline. Do NOT skip steps or batch multiple bugs into one commit.
+
+```
+For each bug:
+  1. REPRODUCE  — Write a minimal script or test that triggers the bug. Confirm it fails.
+  2. TEST       — Add a failing test to the test suite that captures the expected behavior.
+                  Run `pytest` — the new test MUST fail (red).
+  3. FIX        — Implement the minimal fix in the source code. Do not refactor unrelated code.
+  4. VERIFY     — Run `pytest` — ALL tests must pass (green), including the new one.
+  5. REGRESS    — Run the full test suite (`pytest -v`) to confirm no regressions.
+  6. COMMIT     — `ruff format . && ruff check . && pytest` then commit with message:
+                  "Fix: <one-line description of bug>"
+                  Include which file(s) changed and why in the commit body.
+```
+
+For UX improvements and input validation, the same pipeline applies:
+- Step 1 becomes "demonstrate the bad UX" (e.g., show the unhelpful error)
+- Step 2 becomes "write a test for the expected behavior" (e.g., `pytest.raises(ValueError)`)
+
+### Step 18: Bug Fixes
+
+Work through each bug **one at a time** using the procedure above.
+
+#### Bug A: Out-of-range samples saved with wrong bin index
+- **Where:** `sampler.py:331,473` — `max(cur_bin, 0)` assigns bin 0 when state is out of range
+- **Impact:** Wrong importance weights on out-of-range samples
+- **Reproduce:** Run SAMC with e_max smaller than initial energy → samples get bin 0 with wrong weights
+- **Expected:** Out-of-range samples should have log-weight = -inf (or be skipped)
+- **Test:** `test_out_of_range_sample_bin_not_zero` — verify sample_log_weights is -inf when sample is out of range
+- **Fix:** Store bin=-1 for out-of-range samples, set log-weight to -inf in the importance weight computation
+
+#### Bug B: `importance_weights` produces NaN when all weights are -inf
+- **Where:** `SAMCResult.importance_weights` property
+- **Impact:** `logsumexp(-inf) = -inf`, then `-inf - (-inf) = NaN` → NaN weights
+- **Reproduce:** Create SAMCResult with all sample_log_weights = -inf, call `.importance_weights`
+- **Expected:** Return zeros (no valid samples) or raise a clear error
+- **Test:** `test_importance_weights_all_inf` — verify no NaN, returns zeros or raises
+- **Fix:** Check if all log-weights are -inf before normalization; return zeros with warning
+
+#### Bug C: AdaptivePartition unbounded memory growth
+- **Where:** `partitions.py:89` — `_history` list grows by 1 float per call
+- **Impact:** 1M iterations = ~8MB, 100M = ~800MB
+- **Reproduce:** Create AdaptivePartition, call `.assign()` 1M times, check `len(self._history)`
+- **Expected:** Memory usage bounded regardless of iteration count
+- **Test:** `test_adaptive_partition_memory_bounded` — verify history size stays under limit after many calls
+- **Fix:** Use a fixed-size deque or only keep last `max_history` samples (default 50_000)
+
+#### Bug D: AdaptivePartition records out-of-range energies
+- **Where:** `partitions.py:96` — `self._history.append(e)` happens before range check
+- **Impact:** Out-of-range outlier energies skew the adapted bin edges
+- **Reproduce:** Feed mostly in-range values + a few extreme outliers → edges expand to cover outliers
+- **Expected:** Only in-range energies influence adaptation
+- **Test:** `test_adaptive_partition_ignores_outliers` — verify edges don't expand to cover out-of-range values
+- **Fix:** Only append to history if `_bin_for(e) >= 0`
+
+#### Bug E: `UniformPartition.edges` allocates on every call
+- **Where:** `partitions.py:57` — `torch.linspace(...)` creates new tensor each call
+- **Impact:** Wasteful allocation in loops (diagnostics, plotting)
+- **Reproduce:** Call `.edges` 1000 times, measure allocation
+- **Expected:** Same tensor returned each time
+- **Test:** `test_uniform_partition_edges_cached` — verify `p.edges is p.edges` (same object)
+- **Fix:** Compute once in `__init__`, return cached tensor from property
+
+### Step 19: Input Validation
+
+Same procedure: write failing test first, then add validation, then verify.
+
+- [ ] `e_min >= e_max` → `pytest.raises(ValueError, match="e_min must be less than e_max")`
+- [ ] `n_bins <= 0` → `pytest.raises(ValueError, match="n_bins must be positive")`
+- [ ] `dim <= 0` → `pytest.raises(ValueError, match="dim must be positive")`
+- [ ] `proposal_std <= 0` → `pytest.raises(ValueError, match="proposal_std must be positive")`
+- [ ] `n_steps <= 0` in `run()` → `pytest.raises(ValueError, match="n_steps must be positive")`
+
+### Step 20: UX Warnings & Improvements
+
+Each item follows: demonstrate problem → write test → implement → verify.
+
+- [ ] **Warn on out-of-range initial state:** `warnings.warn("Initial energy {e} is outside partition range [{e_min}, {e_max}]. Chain may not mix.")`
+  - Test: `pytest.warns(UserWarning, match="outside partition range")`
+- [ ] **Warn on low acceptance rate:** After `run()` completes, if acceptance_rate < 0.01, warn.
+  - Test: `pytest.warns(UserWarning, match="acceptance rate")`
+- [ ] **`seed` parameter on `run()`:** `run(n_steps=1000, seed=42)` calls `torch.manual_seed(seed)`.
+  - Test: Two runs with same seed produce identical results.
+- [ ] **`edges` on base `Partition` class:** Add abstract property so users don't need `sampler._partition.edges`.
+  - Test: All partition subclasses have `.edges` returning a tensor.
+- [ ] **Naming consistency:** Pick `n_bins` for all partition constructors (it's more intuitive for energy bins). Keep `n_partitions` as the property name for backward compat, but accept `n_bins` in SAMC constructor too.
+  - Test: `SAMC(..., n_bins=10)` works same as `SAMC(..., n_partitions=10)`.
+
+### Step 21: Additional Test Coverage
+
+These are tests for existing behavior that lacks coverage. Write them after Steps 18-20.
+
+- [ ] **Energy function returning (energy, in_region) tuple:** Verify sampler handles `cost_2d` style
+- [ ] **Very short run (n_steps < save_every):** Verify empty samples tensor, no crash
+- [ ] **save_every=1:** Verify all samples saved (samples.shape[0] == n_steps)
+- [ ] **LangevinProposal in full sampler loop:** End-to-end test with gradient-informed proposals
+- [ ] **Multi-chain `plot_diagnostics`:** Verify no crash after multi-chain run
+
+## Phase 3: Production Hardening (PARKED — do not start)
+
+> Recorded for future planning. Do not begin until Phase 2.5 is complete and Frank approves.
+
+### Checkpointing & Serialization
+- Save/load sampler state (theta, partition edges, config) to resume interrupted runs
+- Export results to common formats
+
+### Adaptive Proposal Tuning
+- Auto-tune proposal_std based on acceptance rate (target ~0.234 for high-dim)
+- Dual averaging or Robbins-Monro style adaptation during warmup
+
+### Convergence Diagnostics
+- Weight stabilization test (are theta values converging?)
+- Multi-chain R-hat diagnostic
+- Geweke test on energy trace
+
+### Scaling Study
+- Benchmark SAMC vs MH vs PT across dimensions: 2, 10, 50, 100
+- Identify where SAMC shines vs breaks down
+- Guide recommendations for when to use SAMC
