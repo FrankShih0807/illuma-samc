@@ -81,9 +81,9 @@
 - [x] Save comparison plots side by side
 
 ### Step 10: Benchmarks
-- [ ] Create `benchmarks/vs_mh_pt.py` comparing SAMC vs MH vs parallel tempering on:
+- [x] Create `benchmarks/vs_mh_pt.py` comparing SAMC vs MH vs parallel tempering on:
   - 2D multimodal cost function from `sample_code.py`
   - 10D Gaussian mixture (well-separated modes)
-- [ ] Metrics: best energy found, ESS (effective sample size), acceptance rate, wall-clock time
-- [ ] Generate comparison plots (save as PNG)
-- [ ] Add benchmark results to README
+- [x] Metrics: best energy found, ESS (effective sample size), acceptance rate, wall-clock time
+- [x] Generate comparison plots (save as PNG)
+- [x] Add benchmark results to README
