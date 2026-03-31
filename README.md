@@ -12,9 +12,7 @@ SAMC is an adaptive MCMC algorithm that overcomes the local-trap problem by lear
 
 ![SAMC vs MH comparison](assets/samc_vs_others.png)
 
-Standard Metropolis-Hastings gets trapped in local minima — at low temperature (T=0.1), MH stays in a single energy region for the entire run (top-left: concentrated samples, bottom-left: flat energy trace). Even at T=1.0, MH explores partially but provides no exploration guarantee.
-
-SAMC fixes this by learning sampling weights that penalize over-visited energy regions, producing **uniform exploration across all energy levels** (bottom-right: energy trace covers the full range). This is the flat-histogram property — SAMC visits every energy level equally, escaping local traps automatically.
+At low temperature (T=0.1), all three algorithms face the same challenge. MH gets trapped in a single energy region (bottom-left: flat energy trace). Parallel tempering with cold replicas barely explores. **SAMC's learned weights overcome the energy barriers** — it traverses the full energy range (bottom-right: dense oscillations across all levels), visiting every energy region uniformly despite the low temperature.
 
 ![illuma-samc demo](assets/demo_showcase.png)
 
