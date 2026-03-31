@@ -296,7 +296,79 @@ On this easy 2D problem, **all three algorithms find the global minimum reliably
 
 ---
 
-## 6. Implications for Higher Dimensions
+## 6. Energy-Space Mixing Analysis
+
+> Best energy alone is insufficient — SAMC's purpose is flat-histogram exploration. Mixing metrics reveal differences invisible to energy-only evaluation.
+
+### Metrics
+- **Round-Trip Time (RT)**: Mean iterations per full energy traverse (low → high → low). Lower = faster mixing.
+- **# Round Trips**: Total complete energy traversals in 500K iterations.
+- **AC50**: Energy autocorrelation at lag 50. Lower = faster decorrelation.
+
+### Mixing by Proposal Step Size
+
+![Mixing vs Proposal Std](figures/mixing_proposal_std.png)
+
+| std | Best E | Round-Trip | # Trips | AC50 |
+|-----|--------|-----------|---------|------|
+| 0.01 | -2.45 | ∞ | 0 | 0.50 |
+| 0.05 | -8.12 | 1,344 | 361 | 0.75 |
+| **0.1** | **-8.12** | **715** | **699** | **0.60** |
+| 0.5 | -8.12 | 1,086 | 459 | 0.56 |
+| 1.0 | -8.12 | 2,045 | 243 | 0.69 |
+| 2.0 | -8.10 | 4,821 | 103 | 0.85 |
+
+**`std=0.1` achieves 2x faster mixing** than default `std=0.05` (715 vs 1,344 iter round-trip, 699 vs 361 trips). Both find E=-8.1246 — this difference is invisible without mixing metrics. The optimal acceptance rate for SAMC mixing is **25–35%**, not the classical 44%.
+
+### Mixing by Gain Schedule
+
+![Mixing vs Gain](figures/mixing_gain_schedule.png)
+
+| Gain | Flatness | Round-Trip | # Trips |
+|------|----------|-----------|---------|
+| 1/t | 0.901 | 1,344 | 361 |
+| **log** | **-0.322** | **∞** | **0** |
+| ramp | 0.901 | 1,344 | 361 |
+
+**`log` completely fails to mix** — zero round trips despite finding the optimum. The gain decays too fast, suppressing weight updates before flat exploration is achieved. **Never use `log`.**
+
+### Mixing by Gain t0
+
+![Mixing vs t0](figures/mixing_gain_t0.png)
+
+| t0 | Flatness | Round-Trip | # Trips |
+|----|----------|-----------|---------|
+| 100 | 0.111 | ∞ | 0 |
+| 500 | 0.049 | 162,065 | 3 |
+| 1,000 | 0.901 | 1,344 | 361 |
+| 5,000 | 0.981 | 1,198 | 401 |
+| 10,000 | 0.985 | 1,345 | 361 |
+
+**Sharp phase transition at t0=1000**: below this, SAMC degrades to MH (no mixing). Set `t0 ≥ max(1000, n_iters/500)`.
+
+### SAMC Temperature
+
+![Temperature](figures/mixing_temperature.png)
+
+| T | Flatness | Round-Trip | # Trips |
+|---|----------|-----------|---------|
+| 0.5 | 0.917 | 1,213 | 407 |
+| 1.0 | 0.949 | 1,289 | 386 |
+| 2.0 | 0.783 | 1,611 | 307 |
+| 5.0 | 0.942 | 1,324 | 373 |
+| 10.0 | 0.827 | 1,498 | 324 |
+
+**Temperature has minimal effect** on 2D SAMC — the weight correction already handles exploration. T=1.0 is the safe default; T=0.5 gives marginally faster mixing.
+
+### Flatness vs Mixing Summary
+
+![Summary](figures/mixing_summary.png)
+
+Best configs cluster in upper-left (high flatness + low round-trip time). **`std=0.1` dominates** both dimensions.
+
+---
+
+## 7. Implications for Higher Dimensions
 
 Based on these 2D results, we predict for harder problems:
 
