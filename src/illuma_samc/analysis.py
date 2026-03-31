@@ -90,6 +90,75 @@ def _coverage_rastrigin(samples: torch.Tensor, threshold: float) -> float:
     return 1.0 if found else 0.0
 
 
+def compute_energy_mixing(energy_history: torch.Tensor, n_bins: int = 20) -> dict:
+    """Compute energy-space mixing metrics from an energy trace.
+
+    Parameters
+    ----------
+    energy_history : Tensor
+        1-D tensor of energies at each iteration.
+    n_bins : int
+        Number of energy levels for round-trip computation.
+
+    Returns
+    -------
+    dict with keys:
+        - ``round_trip_time``: mean iterations per full energy round-trip
+          (low → high → low). ``inf`` if no complete round-trip.
+        - ``energy_autocorr_50``: autocorrelation at lag 50.
+        - ``energy_autocorr_200``: autocorrelation at lag 200.
+    """
+    e = energy_history.float()
+    n = len(e)
+
+    # --- Autocorrelation ---
+    e_centered = e - e.mean()
+    var = (e_centered**2).sum()
+    autocorr = {}
+    for lag in [50, 200]:
+        if lag >= n:
+            autocorr[lag] = 1.0
+        else:
+            autocorr[lag] = float((e_centered[: n - lag] * e_centered[lag:]).sum() / var)
+
+    # --- Round-trip time ---
+    e_min, e_max = e.min().item(), e.max().item()
+    if e_min == e_max:
+        return {
+            "round_trip_time": float("inf"),
+            "energy_autocorr_50": 1.0,
+            "energy_autocorr_200": 1.0,
+        }
+
+    low_thresh = e_min + 0.2 * (e_max - e_min)
+    high_thresh = e_max - 0.2 * (e_max - e_min)
+
+    # Track round-trips: low → high → low
+    trip_times = []
+    state = "seeking_low"
+    trip_start = 0
+    for i in range(n):
+        ei = e[i].item()
+        if state == "seeking_low" and ei <= low_thresh:
+            state = "seeking_high"
+            trip_start = i
+        elif state == "seeking_high" and ei >= high_thresh:
+            state = "seeking_low_return"
+        elif state == "seeking_low_return" and ei <= low_thresh:
+            trip_times.append(i - trip_start)
+            state = "seeking_high"
+            trip_start = i
+
+    mean_rt = float(sum(trip_times) / len(trip_times)) if trip_times else float("inf")
+
+    return {
+        "round_trip_time": mean_rt,
+        "energy_autocorr_50": autocorr[50],
+        "energy_autocorr_200": autocorr[200],
+        "n_round_trips": len(trip_times),
+    }
+
+
 def compute_bin_flatness(bin_counts: torch.Tensor) -> float:
     """Compute bin visit flatness metric.
 

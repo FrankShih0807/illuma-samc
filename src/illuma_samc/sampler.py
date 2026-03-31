@@ -112,6 +112,9 @@ class SAMC:
         Upper energy bound for uniform partition (simple mode).
     proposal_std : float
         Gaussian proposal step size (simple mode).
+    temperature : float
+        Temperature for the Boltzmann acceptance ratio. Higher values
+        increase exploration (smoother energy landscape). Default 1.0.
     gain : GainSequence or str
         Gain schedule. Defaults to ``"ramp"`` matching sample_code.py.
     device : str or torch.device
@@ -137,6 +140,7 @@ class SAMC:
         e_min: float = -8.2,
         e_max: float = 0.0,
         proposal_std: float = 0.25,
+        temperature: float = 1.0,
         gain: GainSequence | str = "ramp",
         device: str | torch.device = "cpu",
         proposal_fn: Proposal | None = None,
@@ -160,8 +164,12 @@ class SAMC:
             if e_min >= e_max:
                 raise ValueError("e_min must be less than e_max")
 
+        if temperature <= 0:
+            raise ValueError("temperature must be positive")
+
         self._device = torch.device(device)
         self._dim = dim
+        self._temperature = temperature
 
         # --- Energy function ---
         self._energy_fn = energy_fn
@@ -335,7 +343,7 @@ class SAMC:
                 # Current state out of range — always accept in-range proposals
                 log_r = float("inf") if k2 >= 0 else float("-inf")
             else:
-                log_r = theta[k1].item() - theta[k2].item() - fy_val + fx_val
+                log_r = theta[k1].item() - theta[k2].item() + (-fy_val + fx_val) / self._temperature
 
             # Proposal correction (for asymmetric proposals)
             if hasattr(self._proposal, "log_ratio"):
@@ -502,7 +510,7 @@ class SAMC:
                 elif k1 < 0:
                     log_r = float("inf") if k2 >= 0 else float("-inf")
                 else:
-                    log_r = theta[k1].item() - theta[k2].item() - fy_c + fx_c
+                    log_r = theta[k1].item() - theta[k2].item() + (-fy_c + fx_c) / self._temperature
 
                 # Proposal correction (for asymmetric proposals)
                 if hasattr(self._proposal, "log_ratio"):

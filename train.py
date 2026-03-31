@@ -23,7 +23,7 @@ import torch
 import yaml
 
 from illuma_samc import SAMC
-from illuma_samc.analysis import compute_bin_flatness
+from illuma_samc.analysis import compute_bin_flatness, compute_energy_mixing
 from illuma_samc.baselines import run_mh, run_parallel_tempering
 from illuma_samc.partitions import AdaptivePartition, QuantilePartition
 from illuma_samc.problems import PROBLEMS
@@ -109,6 +109,7 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         "e_min": cfg.get("e_min", -8.2),
         "e_max": cfg.get("e_max", 0.0),
         "proposal_std": cfg.get("proposal_std", 0.25),
+        "temperature": cfg.get("temperature", 1.0),
         "gain": cfg.get("gain", "ramp"),
         "gain_kwargs": gain_kwargs,
     }
@@ -125,10 +126,17 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     result = sampler.run(n_steps=n_iters, x0=x0, save_every=save_every, progress=True)
     wall_time = time.perf_counter() - t0
 
+    # Compute mixing metrics
+    mixing = compute_energy_mixing(result.energy_history)
+
     return {
         "best_energy": float(result.best_energy),
         "acceptance_rate": float(result.acceptance_rate),
         "bin_flatness": compute_bin_flatness(result.bin_counts),
+        "round_trip_time": mixing["round_trip_time"],
+        "energy_autocorr_50": mixing["energy_autocorr_50"],
+        "energy_autocorr_200": mixing["energy_autocorr_200"],
+        "n_round_trips": mixing["n_round_trips"],
         "wall_time": wall_time,
         "total_energy_evals": n_iters,
         "n_iters": n_iters,
@@ -271,7 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--gain", type=str, default=None, help="Gain schedule (SAMC): ramp, 1/t, log"
     )
-    parser.add_argument("--temperature", type=float, default=None, help="Temperature (MH)")
+    parser.add_argument("--temperature", type=float, default=None, help="Temperature (SAMC/MH)")
     parser.add_argument("--n_replicas", type=int, default=None, help="Number of replicas (PT)")
     parser.add_argument("--t_min", type=float, default=None, help="Min temperature (PT)")
     parser.add_argument("--t_max", type=float, default=None, help="Max temperature (PT)")
