@@ -172,83 +172,32 @@ For UX improvements and input validation, the same pipeline applies:
 - Step 2 becomes "write a test for the expected behavior" (e.g., `pytest.raises(ValueError)`)
 
 ### Step 18: Bug Fixes
-
-Work through each bug **one at a time** using the procedure above.
-
-#### Bug A: Out-of-range samples saved with wrong bin index
-- **Where:** `sampler.py:331,473` — `max(cur_bin, 0)` assigns bin 0 when state is out of range
-- **Impact:** Wrong importance weights on out-of-range samples
-- **Reproduce:** Run SAMC with e_max smaller than initial energy → samples get bin 0 with wrong weights
-- **Expected:** Out-of-range samples should have log-weight = -inf (or be skipped)
-- **Test:** `test_out_of_range_sample_bin_not_zero` — verify sample_log_weights is -inf when sample is out of range
-- **Fix:** Store bin=-1 for out-of-range samples, set log-weight to -inf in the importance weight computation
-
-#### Bug B: `importance_weights` produces NaN when all weights are -inf
-- **Where:** `SAMCResult.importance_weights` property
-- **Impact:** `logsumexp(-inf) = -inf`, then `-inf - (-inf) = NaN` → NaN weights
-- **Reproduce:** Create SAMCResult with all sample_log_weights = -inf, call `.importance_weights`
-- **Expected:** Return zeros (no valid samples) or raise a clear error
-- **Test:** `test_importance_weights_all_inf` — verify no NaN, returns zeros or raises
-- **Fix:** Check if all log-weights are -inf before normalization; return zeros with warning
-
-#### Bug C: AdaptivePartition unbounded memory growth
-- **Where:** `partitions.py:89` — `_history` list grows by 1 float per call
-- **Impact:** 1M iterations = ~8MB, 100M = ~800MB
-- **Reproduce:** Create AdaptivePartition, call `.assign()` 1M times, check `len(self._history)`
-- **Expected:** Memory usage bounded regardless of iteration count
-- **Test:** `test_adaptive_partition_memory_bounded` — verify history size stays under limit after many calls
-- **Fix:** Use a fixed-size deque or only keep last `max_history` samples (default 50_000)
-
-#### Bug D: AdaptivePartition records out-of-range energies
-- **Where:** `partitions.py:96` — `self._history.append(e)` happens before range check
-- **Impact:** Out-of-range outlier energies skew the adapted bin edges
-- **Reproduce:** Feed mostly in-range values + a few extreme outliers → edges expand to cover outliers
-- **Expected:** Only in-range energies influence adaptation
-- **Test:** `test_adaptive_partition_ignores_outliers` — verify edges don't expand to cover out-of-range values
-- **Fix:** Only append to history if `_bin_for(e) >= 0`
-
-#### Bug E: `UniformPartition.edges` allocates on every call
-- **Where:** `partitions.py:57` — `torch.linspace(...)` creates new tensor each call
-- **Impact:** Wasteful allocation in loops (diagnostics, plotting)
-- **Reproduce:** Call `.edges` 1000 times, measure allocation
-- **Expected:** Same tensor returned each time
-- **Test:** `test_uniform_partition_edges_cached` — verify `p.edges is p.edges` (same object)
-- **Fix:** Compute once in `__init__`, return cached tensor from property
+- [x] Bug A: Out-of-range samples saved with wrong bin index — fixed `max(cur_bin, 0)` in single/multi-chain
+- [x] Bug B: `importance_weights` NaN when all -inf — returns zeros with warning
+- [x] Bug C: AdaptivePartition unbounded memory — uses deque(maxlen=50_000)
+- [x] Bug D: AdaptivePartition records out-of-range energies — only appends in-range
+- [x] Bug E: UniformPartition.edges allocates per call — cached in __init__
 
 ### Step 19: Input Validation
-
-Same procedure: write failing test first, then add validation, then verify.
-
-- [ ] `e_min >= e_max` → `pytest.raises(ValueError, match="e_min must be less than e_max")`
-- [ ] `n_bins <= 0` → `pytest.raises(ValueError, match="n_bins must be positive")`
-- [ ] `dim <= 0` → `pytest.raises(ValueError, match="dim must be positive")`
-- [ ] `proposal_std <= 0` → `pytest.raises(ValueError, match="proposal_std must be positive")`
-- [ ] `n_steps <= 0` in `run()` → `pytest.raises(ValueError, match="n_steps must be positive")`
+- [x] `e_min >= e_max` → ValueError
+- [x] `n_bins <= 0` → ValueError
+- [x] `dim <= 0` → ValueError
+- [x] `proposal_std <= 0` → ValueError
+- [x] `n_steps <= 0` in `run()` → ValueError
 
 ### Step 20: UX Warnings & Improvements
-
-Each item follows: demonstrate problem → write test → implement → verify.
-
-- [ ] **Warn on out-of-range initial state:** `warnings.warn("Initial energy {e} is outside partition range [{e_min}, {e_max}]. Chain may not mix.")`
-  - Test: `pytest.warns(UserWarning, match="outside partition range")`
-- [ ] **Warn on low acceptance rate:** After `run()` completes, if acceptance_rate < 0.01, warn.
-  - Test: `pytest.warns(UserWarning, match="acceptance rate")`
-- [ ] **`seed` parameter on `run()`:** `run(n_steps=1000, seed=42)` calls `torch.manual_seed(seed)`.
-  - Test: Two runs with same seed produce identical results.
-- [ ] **`edges` on base `Partition` class:** Add abstract property so users don't need `sampler._partition.edges`.
-  - Test: All partition subclasses have `.edges` returning a tensor.
-- [ ] **Naming consistency:** Pick `n_bins` for all partition constructors (it's more intuitive for energy bins). Keep `n_partitions` as the property name for backward compat, but accept `n_bins` in SAMC constructor too.
-  - Test: `SAMC(..., n_bins=10)` works same as `SAMC(..., n_partitions=10)`.
+- [x] Warn on out-of-range initial state
+- [x] Warn on low acceptance rate (< 1%)
+- [x] `seed` parameter on `run()`
+- [x] `edges` abstract property on base `Partition` class
+- [x] `n_bins` alias in SAMC constructor
 
 ### Step 21: Additional Test Coverage
-
-These are tests for existing behavior that lacks coverage. Write them after Steps 18-20.
-
-- [ ] **Energy function returning (energy, in_region) tuple:** Verify sampler handles `cost_2d` style
-- [ ] **Very short run (n_steps < save_every):** Verify empty samples tensor, no crash
-- [ ] **save_every=1:** Verify all samples saved (samples.shape[0] == n_steps)
-- [ ] **LangevinProposal in full sampler loop:** End-to-end test with gradient-informed proposals
-- [ ] **Multi-chain `plot_diagnostics`:** Verify no crash after multi-chain run
+- [x] Energy function returning (energy, in_region) tuple
+- [x] Very short run (n_steps < save_every)
+- [x] save_every=1
+- [x] LangevinProposal end-to-end
+- [x] Multi-chain `plot_diagnostics` (found and fixed crash)
 
 ## Phase 3: Production Hardening (PARKED — do not start)
 

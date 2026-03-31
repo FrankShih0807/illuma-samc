@@ -25,6 +25,19 @@
 - **Blocked on:** Nothing.
 - **Affects:** None.
 
+## [2026-03-31] Phase 2.75: Bug Fixes, Input Validation, UX, Tests (Steps 18-21)
+- **Phase:** bugfix
+- **Status:** done
+- **Summary:**
+  - Step 18: Fixed 5 bugs (one commit each): out-of-range sample bin assignment in multi-chain, importance_weights NaN on all-inf, AdaptivePartition unbounded memory (now deque), AdaptivePartition recording outliers, UniformPartition.edges allocation per call.
+  - Step 19: Added input validation for e_min/e_max, n_bins, dim, proposal_std, n_steps with descriptive ValueErrors.
+  - Step 20: Added 5 UX improvements (one commit each): warn on out-of-range initial state, warn on low acceptance rate, seed parameter on run(), abstract edges on Partition base class, n_bins alias in SAMC constructor.
+  - Step 21: Added 5 coverage tests. Found and fixed multi-chain plot_diagnostics crash (energy_history was list[Tensor] not list[float]).
+  - Test suite: 72 passed, 3 skipped (CUDA), 0 failed.
+- **Decisions made:** Used deque(maxlen=50_000) for AdaptivePartition history. importance_weights returns zeros with warning on all-inf. n_bins is alias for n_partitions (backward compat kept).
+- **Blocked on:** Nothing — Phase 2.75 complete.
+- **Affects:** None.
+
 ## [2026-03-30] Phase 2 Complete: GPU, Parallel Chains, Verification, Benchmarks
 - **Phase:** generalizing
 - **Status:** done
