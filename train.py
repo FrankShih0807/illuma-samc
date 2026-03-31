@@ -23,7 +23,9 @@ import torch
 import yaml
 
 from illuma_samc import SAMC
+from illuma_samc.analysis import compute_bin_flatness
 from illuma_samc.baselines import run_mh, run_parallel_tempering
+from illuma_samc.partitions import AdaptivePartition, QuantilePartition
 from illuma_samc.problems import PROBLEMS
 
 # ────────────────────────────────────────────────────────
@@ -64,33 +66,69 @@ def merge_config(defaults: dict, cli_overrides: dict) -> dict:
 # ────────────────────────────────────────────────────────
 
 
+def _build_partition(energy_fn, dim: int, cfg: dict):
+    """Build partition object based on config, or None for default."""
+    ptype = cfg.get("partition_type", "uniform")
+    n_partitions = cfg.get("n_partitions", 42)
+    e_min = cfg.get("e_min", -8.2)
+    e_max = cfg.get("e_max", 0.0)
+    if ptype == "adaptive":
+        return AdaptivePartition(n_bins=n_partitions, e_min=e_min, e_max=e_max)
+    elif ptype == "quantile":
+        # QuantilePartition needs warmup energies — evaluate random samples
+        n_warmup = max(1000, n_partitions * 50)
+        warmup_x = torch.randn(n_warmup, dim)
+        raw = energy_fn(warmup_x)
+        energies = raw[0] if isinstance(raw, tuple) else raw
+        return QuantilePartition(energies=energies, n_bins=n_partitions)
+    # uniform — return None so SAMC uses its default UniformPartition
+    return None
+
+
 def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     """Run SAMC and return results dict."""
     n_iters = cfg.get("n_iters", 500_000)
     save_every = cfg.get("save_every", 100)
 
     gain_kwargs = cfg.get("gain_kwargs", {"rho": 1.0, "tau": 1.0, "warmup": 1, "step_scale": 1000})
+    # Allow gain_t0 CLI override
+    if "gain_t0" in cfg:
+        gain_kwargs = dict(gain_kwargs)
+        gain_kwargs["t0"] = cfg["gain_t0"]
 
     seed = cfg.get("seed", 42)
     torch.manual_seed(seed)
 
+    partition_fn = _build_partition(energy_fn, dim, cfg)
+
     t0 = time.perf_counter()
-    sampler = SAMC(
-        energy_fn=energy_fn,
-        dim=dim,
-        n_partitions=cfg.get("n_partitions", 42),
-        e_min=cfg.get("e_min", -8.2),
-        e_max=cfg.get("e_max", 0.0),
-        proposal_std=cfg.get("proposal_std", 0.25),
-        gain=cfg.get("gain", "ramp"),
-        gain_kwargs=gain_kwargs,
-    )
-    result = sampler.run(n_steps=n_iters, save_every=save_every, progress=True)
+    sampler_kwargs = {
+        "energy_fn": energy_fn,
+        "dim": dim,
+        "n_partitions": cfg.get("n_partitions", 42),
+        "e_min": cfg.get("e_min", -8.2),
+        "e_max": cfg.get("e_max", 0.0),
+        "proposal_std": cfg.get("proposal_std", 0.25),
+        "gain": cfg.get("gain", "ramp"),
+        "gain_kwargs": gain_kwargs,
+    }
+    if partition_fn is not None:
+        sampler_kwargs["partition_fn"] = partition_fn
+    sampler = SAMC(**sampler_kwargs)
+
+    # Multi-chain support
+    n_chains = cfg.get("n_chains", 1)
+    if n_chains > 1:
+        x0 = torch.randn(n_chains, dim)
+    else:
+        x0 = None
+    result = sampler.run(n_steps=n_iters, x0=x0, save_every=save_every, progress=True)
     wall_time = time.perf_counter() - t0
 
     return {
         "best_energy": float(result.best_energy),
         "acceptance_rate": float(result.acceptance_rate),
+        "bin_flatness": compute_bin_flatness(result.bin_counts),
         "wall_time": wall_time,
         "total_energy_evals": n_iters,
         "n_iters": n_iters,
@@ -247,6 +285,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override output directory (default: outputs/<model>/<algo>/<timestamp>)",
     )
+    parser.add_argument(
+        "--partition_type",
+        choices=["uniform", "adaptive", "quantile"],
+        default=None,
+        help="Partition type (SAMC)",
+    )
+    parser.add_argument("--n_chains", type=int, default=None, help="Number of parallel chains")
+    parser.add_argument(
+        "--gain_t0", type=float, default=None, help="Override gain_kwargs.t0 (SAMC)"
+    )
     return parser
 
 
@@ -308,6 +356,8 @@ def main():
     print(f"  Acceptance rate:   {metrics['acceptance_rate']:.3f}")
     print(f"  Wall time:         {metrics['wall_time']:.1f}s")
     print(f"  Energy evals:      {metrics['total_energy_evals']:,}")
+    if "bin_flatness" in metrics:
+        print(f"  Bin flatness:      {metrics['bin_flatness']:.3f}")
     if "swap_rate" in metrics:
         print(f"  Swap rate:         {metrics['swap_rate']:.3f}")
     print(f"  Output saved to:   {output_dir}")
