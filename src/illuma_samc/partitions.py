@@ -39,6 +39,7 @@ class UniformPartition(Partition):
         self._e_max = e_max
         self._n_bins = n_bins
         self._scale = n_bins / (e_max - e_min)
+        self._edges = torch.linspace(e_min, e_max, n_bins + 1)
 
     def assign(self, energy: torch.Tensor) -> int:
         """Return bin index, or -1 if energy is outside [e_min, e_max]."""
@@ -55,7 +56,7 @@ class UniformPartition(Partition):
     @property
     def edges(self) -> torch.Tensor:
         """Bin edges as a 1-D tensor of length ``n_bins + 1``."""
-        return torch.linspace(self._e_min, self._e_max, self._n_bins + 1)
+        return self._edges
 
 
 class AdaptivePartition(Partition):

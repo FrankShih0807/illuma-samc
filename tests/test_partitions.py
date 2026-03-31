@@ -25,6 +25,11 @@ class TestUniformPartition:
         p = UniformPartition(e_min=-8.2, e_max=0.0, n_bins=42)
         assert p.edges.shape == (43,)
 
+    def test_uniform_partition_edges_cached(self):
+        """Bug E: edges should return the same object each time (cached)."""
+        p = UniformPartition(e_min=-8.2, e_max=0.0, n_bins=42)
+        assert p.edges is p.edges, "edges should return the same cached tensor"
+
     def test_matches_sample_code_binning(self):
         """Verify binning matches sample_code.py get_bin logic."""
         p = UniformPartition(e_min=-8.2, e_max=0.0, n_bins=42)
