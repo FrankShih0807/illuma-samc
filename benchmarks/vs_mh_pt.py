@@ -396,9 +396,9 @@ def plot_trajectories_2d(results_2d: dict):
         step = max(1, n // 3000)
         sx, sy = samples[::step, 0], samples[::step, 1]
 
-        # Plot trajectory as line + scatter
-        ax.plot(sx, sy, color=color, alpha=0.15, linewidth=0.3, zorder=2)
-        ax.scatter(sx, sy, c=color, s=0.5, alpha=0.4, zorder=3)
+        # Plot trajectory as line + scatter (red for contrast against viridis)
+        ax.plot(sx, sy, color="red", alpha=0.08, linewidth=0.3, zorder=2)
+        ax.scatter(sx, sy, c="red", s=0.5, alpha=0.35, zorder=3)
 
         # Mark best point
         best_x = results_2d[method].get("best_x", None)
@@ -410,12 +410,12 @@ def plot_trajectories_2d(results_2d: dict):
             ax.scatter(
                 best_x[0],
                 best_x[1],
-                c="red",
-                s=80,
+                c="white",
+                s=100,
                 marker="*",
                 zorder=5,
-                edgecolors="white",
-                linewidths=0.5,
+                edgecolors="black",
+                linewidths=0.8,
                 label=f"Best E={results_2d[method]['best_energy']:.3f}",
             )
 
