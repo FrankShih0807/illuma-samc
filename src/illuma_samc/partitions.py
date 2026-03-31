@@ -20,6 +20,11 @@ class Partition(ABC):
     def n_partitions(self) -> int:
         """Number of bins."""
 
+    @property
+    @abstractmethod
+    def edges(self) -> torch.Tensor:
+        """Bin edges as a 1-D tensor of length ``n_partitions + 1``."""
+
 
 class UniformPartition(Partition):
     """Linearly-spaced energy bins matching ``sample_code.py`` style.
