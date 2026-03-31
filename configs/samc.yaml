@@ -1,0 +1,21 @@
+2d:
+  n_partitions: 42
+  e_min: -8.2
+  e_max: 0.0
+  proposal_std: 0.05
+  n_iters: 500000
+  gain: ramp
+  gain_kwargs: {rho: 1.0, tau: 1.0, warmup: 1, step_scale: 1000}
+  save_every: 100
+  seed: 42
+
+10d:
+  n_partitions: 30
+  e_min: 0.0
+  e_max: 20.0
+  proposal_std: 1.0
+  n_iters: 200000
+  gain: ramp
+  gain_kwargs: {rho: 1.0, tau: 1.0, warmup: 1, step_scale: 1000}
+  save_every: 100
+  seed: 42
