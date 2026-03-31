@@ -628,8 +628,8 @@ def main():
         save_every=save_every,
         samc_kwargs={
             "n_partitions": 30,
-            "e_min": -5.0,
-            "e_max": 30.0,
+            "e_min": 0.0,
+            "e_max": 15.0,
             "proposal_std": proposal_std_10d,
             "gain": "ramp",
             "gain_kwargs": {
