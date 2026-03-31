@@ -9,10 +9,12 @@ from illuma_samc.gain import GainSequence
 from illuma_samc.partitions import AdaptivePartition, QuantilePartition, UniformPartition
 from illuma_samc.proposals import GaussianProposal, LangevinProposal
 from illuma_samc.sampler import SAMC, SAMCResult
+from illuma_samc.weight_manager import SAMCWeights
 
 __all__ = [
     "SAMC",
     "SAMCResult",
+    "SAMCWeights",
     "GainSequence",
     "UniformPartition",
     "AdaptivePartition",
