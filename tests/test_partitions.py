@@ -15,11 +15,11 @@ class TestUniformPartition:
 
     def test_below_range(self):
         p = UniformPartition(e_min=0.0, e_max=10.0, n_bins=10)
-        assert p.assign(torch.tensor(-5.0)) == 0
+        assert p.assign(torch.tensor(-5.0)) == -1
 
     def test_above_range(self):
         p = UniformPartition(e_min=0.0, e_max=10.0, n_bins=10)
-        assert p.assign(torch.tensor(100.0)) == 9
+        assert p.assign(torch.tensor(100.0)) == -1
 
     def test_edges_shape(self):
         p = UniformPartition(e_min=-8.2, e_max=0.0, n_bins=42)
@@ -32,7 +32,7 @@ class TestUniformPartition:
         # Close but not exact — our partition is more general
         assert p.assign(torch.tensor(-8.2)) == 0
         assert p.assign(torch.tensor(0.0)) == 42 - 1
-        assert p.assign(torch.tensor(1.0)) == 42 - 1  # above range
+        assert p.assign(torch.tensor(1.0)) == -1  # above range
 
 
 class TestAdaptivePartition:

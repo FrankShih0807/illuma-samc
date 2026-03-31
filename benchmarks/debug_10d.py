@@ -55,9 +55,12 @@ def run_config(name, sampler, n_steps=200_000, save_every=100):
     print(f"  Empty bins: {(counts == 0).sum()} / {len(counts)}")
     print(f"  Sample E range: [{sample_energies.min():.2f}, {sample_energies.max():.2f}]")
 
+    edges = sampler._partition.edges.numpy()
+
     return {
         "theta": theta,
         "counts": counts,
+        "edges": edges,
         "sample_energies": sample_energies,
         "best_energy": result.best_energy,
         "acceptance_rate": result.acceptance_rate,
@@ -69,60 +72,40 @@ def run_config(name, sampler, n_steps=200_000, save_every=100):
 
 configs = {}
 
-# 1. Original: bad range
-torch.manual_seed(42)
-sampler1 = SAMC(
-    energy_fn=gaussian_mixture_10d,
-    dim=10,
-    n_partitions=30,
-    e_min=-5.0,
-    e_max=30.0,
-    proposal_std=1.0,
-    gain="ramp",
-    gain_kwargs={"rho": 1.0, "tau": 1.0, "warmup": 1, "step_scale": 1000},
-)
-configs["Original (e∈[-5,30])"] = run_config("Original (e∈[-5,30])", sampler1)
-
-# 2. Tightened range
-torch.manual_seed(42)
-sampler2 = SAMC(
-    energy_fn=gaussian_mixture_10d,
-    dim=10,
-    n_partitions=30,
-    e_min=0.0,
-    e_max=15.0,
-    proposal_std=1.0,
-    gain="ramp",
-    gain_kwargs={"rho": 1.0, "tau": 1.0, "warmup": 1, "step_scale": 1000},
-)
-configs["Tight (e∈[0,15])"] = run_config("Tight (e∈[0,15])", sampler2)
-
-# 3. Adaptive partition
-torch.manual_seed(42)
-sampler3 = SAMC(
-    energy_fn=gaussian_mixture_10d,
-    dim=10,
-    proposal_fn=GaussianProposal(step_size=1.0),
-    partition_fn=AdaptivePartition(e_min=-5.0, e_max=30.0, n_bins=30, adapt_interval=5000),
-    gain=GainSequence("ramp", rho=1.0, tau=1.0, warmup=1, step_scale=1000),
-)
-configs["Adaptive (starts [-5,30])"] = run_config("Adaptive (starts [-5,30])", sampler3)
+# Sweep e_max with fixed e_min=0
+e_max_values = [10, 20, 30, 50, 80]
+for e_max in e_max_values:
+    torch.manual_seed(42)
+    sampler = SAMC(
+        energy_fn=gaussian_mixture_10d,
+        dim=10,
+        n_partitions=30,
+        e_min=0.0,
+        e_max=float(e_max),
+        proposal_std=1.0,
+        gain="ramp",
+        gain_kwargs={"rho": 1.0, "tau": 1.0, "warmup": 1, "step_scale": 1000},
+    )
+    label = f"e∈[0,{e_max}]"
+    configs[label] = run_config(label, sampler)
 
 # --- Plot ---
-fig, axes = plt.subplots(3, 4, figsize=(18, 13))
+n_configs = len(configs)
+fig, axes = plt.subplots(n_configs, 4, figsize=(18, 4 * n_configs + 1))
 fig.suptitle(
-    "SAMC Partition Strategy Comparison: 10D Gaussian Mixture", fontsize=14, fontweight="bold"
+    "SAMC e_max Sweep: 10D Gaussian Mixture (e_min=0, 30 bins)", fontsize=14, fontweight="bold"
 )
 
 for row, (label, d) in enumerate(configs.items()):
     theta = d["theta"]
     counts = d["counts"]
+    edges = d["edges"]
     n_bins = len(theta)
 
-    # Infer bin centers from counts length
-    # For uniform, we can just use range indices
-    centers = np.arange(n_bins)
-    w = 0.8
+    # Use energy bin centers for x-axis
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    bin_width = edges[1] - edges[0]
+    w = bin_width * 0.85
 
     # Log weights (centered)
     theta_c = theta - theta.mean()
@@ -140,7 +123,7 @@ for row, (label, d) in enumerate(configs.items()):
     axes[row, 2].bar(centers, weights, width=w, color="green", alpha=0.8)
     axes[row, 2].set_title("Learned Weights")
 
-    # Sample energy histogram
+    # Sample energy histogram — use same x range as bin plots
     axes[row, 3].hist(
         d["sample_energies"], bins=50, color="purple", alpha=0.7, edgecolor="black", linewidth=0.3
     )
@@ -151,7 +134,7 @@ for row, (label, d) in enumerate(configs.items()):
     axes[row, 3].legend(fontsize=8)
 
 for ax in axes[-1]:
-    ax.set_xlabel("Bin index / Energy")
+    ax.set_xlabel("Energy")
 
 plt.tight_layout()
 plt.savefig("benchmarks/debug_10d_diagnostics.png", dpi=200, bbox_inches="tight")

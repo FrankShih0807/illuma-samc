@@ -40,11 +40,10 @@ class UniformPartition(Partition):
         self._scale = n_bins / (e_max - e_min)
 
     def assign(self, energy: torch.Tensor) -> int:
+        """Return bin index, or -1 if energy is outside [e_min, e_max]."""
         e = energy.item() if isinstance(energy, torch.Tensor) else float(energy)
-        if e > self._e_max:
-            return self._n_bins - 1
-        if e < self._e_min:
-            return 0
+        if e > self._e_max or e < self._e_min:
+            return -1
         idx = int((e - self._e_min) * self._scale)
         return min(idx, self._n_bins - 1)
 
@@ -101,6 +100,8 @@ class AdaptivePartition(Partition):
         return self._bin_for(e)
 
     def _bin_for(self, e: float) -> int:
+        if e < self._edges[0].item() or e > self._edges[-1].item():
+            return -1
         idx = int(torch.searchsorted(self._edges, torch.tensor(e, dtype=torch.float64)).item()) - 1
         return max(0, min(idx, self._n_bins - 1))
 
@@ -139,6 +140,8 @@ class QuantilePartition(Partition):
 
     def assign(self, energy: torch.Tensor) -> int:
         e = energy.item() if isinstance(energy, torch.Tensor) else float(energy)
+        if e < self._edges[0].item() or e > self._edges[-1].item():
+            return -1
         idx = int(torch.searchsorted(self._edges, torch.tensor(e, dtype=torch.float64)).item()) - 1
         return max(0, min(idx, self._n_bins - 1))
 

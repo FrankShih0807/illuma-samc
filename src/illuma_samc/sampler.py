@@ -281,9 +281,16 @@ class SAMC:
             fy_val = fy.item()
             k2 = self._partition.assign(fy)
 
+            # Reject if proposal lands outside partition range
+            if k2 < 0:
+                in_reg = False
+
             # Log acceptance ratio
             if self._log_accept_fn is not None:
                 log_r = self._log_accept_fn(x, x_new, fx, fy)
+            elif k1 < 0:
+                # Current state out of range — always accept in-range proposals
+                log_r = float("inf") if k2 >= 0 else float("-inf")
             else:
                 log_r = theta[k1].item() - theta[k2].item() - fy_val + fx_val
 
@@ -307,7 +314,7 @@ class SAMC:
                 theta[k2] += delta
                 counts[k2] += 1
                 accept_count += 1
-            else:
+            elif k1 >= 0:
                 theta -= delta * refden
                 theta[k1] += delta
                 counts[k1] += 1
@@ -319,8 +326,9 @@ class SAMC:
             energy_history.append(fx_val)
 
             if it % save_every == 0:
+                cur_bin = self._partition.assign(fx)
                 samples.append(x.clone())
-                sample_bins.append(self._partition.assign(fx))
+                sample_bins.append(max(cur_bin, 0))
 
         self.log_weights = theta
         self.energy_history = energy_history
@@ -334,9 +342,13 @@ class SAMC:
         )
 
         # Per-sample importance log-weights: -theta[bin] reweights from flat to target
+        # Only include samples from bins with positive visit counts (unvisited bins
+        # have meaningless theta values from accumulated uniform subtraction).
         if sample_bins:
             bin_idx = torch.tensor(sample_bins, dtype=torch.long)
-            sample_log_w = -theta[bin_idx].float().to(device)
+            visited_mask = counts[bin_idx] > 0
+            sample_log_w = torch.full((len(sample_bins),), float("-inf"), device=device)
+            sample_log_w[visited_mask] = -theta[bin_idx[visited_mask]].float().to(device)
         else:
             sample_log_w = torch.empty(0, device=device)
 
@@ -409,9 +421,16 @@ class SAMC:
                 k1 = self._partition.assign(fx[c])
                 k2 = self._partition.assign(fy[c])
 
+                in_reg_c = in_reg[c].item()
+                # Reject if proposal lands outside partition range
+                if k2 < 0:
+                    in_reg_c = False
+
                 # Log acceptance ratio
                 if self._log_accept_fn is not None:
                     log_r = self._log_accept_fn(x[c], x_new[c], fx[c], fy[c])
+                elif k1 < 0:
+                    log_r = float("inf") if k2 >= 0 else float("-inf")
                 else:
                     log_r = theta[k1].item() - theta[k2].item() - fy_c + fx_c
 
@@ -420,7 +439,7 @@ class SAMC:
                     log_r += self._proposal.log_ratio(x[c], x_new[c])
 
                 # Accept/reject
-                if not in_reg[c].item():
+                if not in_reg_c:
                     accept = False
                 elif log_r > 0:
                     accept = True
@@ -434,7 +453,7 @@ class SAMC:
                     theta[k2] += delta
                     counts[k2] += 1
                     accept_count += 1
-                else:
+                elif k1 >= 0:
                     theta -= delta * refden
                     theta[k1] += delta
                     counts[k1] += 1
@@ -451,7 +470,7 @@ class SAMC:
             if it % save_every == 0:
                 samples.append(x.clone())  # (N, dim)
                 sample_bins_per_step.append(
-                    [self._partition.assign(fx[c]) for c in range(n_chains)]
+                    [max(self._partition.assign(fx[c]), 0) for c in range(n_chains)]
                 )
 
         acc_rate = accept_count / total_decisions if total_decisions > 0 else 0.0
@@ -471,10 +490,13 @@ class SAMC:
             samples_tensor = torch.empty(n_chains, 0, self._dim, device=device)
 
         # Per-sample importance log-weights: -theta[bin] → (N, n_saved)
+        # Only include samples from bins with positive visit counts.
         if sample_bins_per_step:
             # (n_saved, N)
             bin_idx = torch.tensor(sample_bins_per_step, dtype=torch.long)
-            sample_log_w = -theta[bin_idx].float().to(device)  # (n_saved, N)
+            visited_mask = counts[bin_idx] > 0  # (n_saved, N)
+            sample_log_w = torch.full_like(bin_idx, float("-inf"), dtype=torch.float32, device=device)
+            sample_log_w[visited_mask] = -theta[bin_idx[visited_mask]].float().to(device)
             sample_log_w = sample_log_w.permute(1, 0)  # (N, n_saved)
         else:
             sample_log_w = torch.empty(n_chains, 0, device=device)

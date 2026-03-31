@@ -4,7 +4,7 @@ Two test problems:
   1. 2D multimodal cost function from sample_code.py
   2. 10D Gaussian mixture with well-separated modes
 
-Metrics: best energy found, ESS, acceptance rate, wall-clock time.
+Metrics: best energy found, acceptance rate, wall-clock time.
 """
 
 import math
@@ -244,34 +244,6 @@ def run_parallel_tempering(
 
 
 # ────────────────────────────────────────────────────────
-# Effective Sample Size (ESS)
-# ────────────────────────────────────────────────────────
-
-
-def compute_ess(energies: torch.Tensor) -> float:
-    """Estimate ESS from energy trace using autocorrelation."""
-    n = len(energies)
-    if n < 10:
-        return float(n)
-    x = energies.float()
-    x = x - x.mean()
-    var = x.var().item()
-    if var < 1e-12:
-        return float(n)
-
-    # Compute autocorrelation up to lag n//2
-    max_lag = min(n // 2, 5000)
-    acf_sum = 0.0
-    for lag in range(1, max_lag + 1):
-        c = torch.mean(x[:-lag] * x[lag:]).item() / var
-        if c < 0.05:
-            break
-        acf_sum += c
-
-    tau = 1.0 + 2.0 * acf_sum
-    return n / tau
-
-
 # ────────────────────────────────────────────────────────
 # Main benchmark
 # ────────────────────────────────────────────────────────
@@ -322,13 +294,10 @@ def benchmark_problem(
     burn_in_snapshots = burn_in // save_every
     samc_samples = samc_result.samples[burn_in_snapshots:]
 
-    samc_energies_post = samc_result.energy_history.flatten()[burn_in:]
-    samc_ess = compute_ess(samc_energies_post)
     results["samc"] = {
         "best_energy": samc_result.best_energy,
         "best_x": samc_result.best_x,
         "acceptance_rate": samc_result.acceptance_rate,
-        "ess": samc_ess,
         "wall_time": t_samc,
         "energies": samc_result.energy_history.flatten(),
         "samples": samc_samples,
@@ -336,7 +305,6 @@ def benchmark_problem(
     print(
         f"    best_E={samc_result.best_energy:.4f}  "
         f"acc={samc_result.acceptance_rate:.3f}  "
-        f"ESS={samc_ess:.0f}  "
         f"n_samples={len(samc_samples)}  time={t_samc:.1f}s"
     )
 
@@ -346,13 +314,10 @@ def benchmark_problem(
     t0 = time.perf_counter()
     mh_result = run_mh(energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **mh_kwargs)
     t_mh = time.perf_counter() - t0
-    mh_energies_post = mh_result["energies"][burn_in:]
-    mh_ess = compute_ess(mh_energies_post)
     results["mh"] = {
         "best_energy": mh_result["best_energy"],
         "best_x": mh_result["best_x"],
         "acceptance_rate": mh_result["acceptance_rate"],
-        "ess": mh_ess,
         "wall_time": t_mh,
         "energies": mh_result["energies"],
         "samples": mh_result["samples"],
@@ -360,7 +325,6 @@ def benchmark_problem(
     print(
         f"    best_E={mh_result['best_energy']:.4f}  "
         f"acc={mh_result['acceptance_rate']:.3f}  "
-        f"ESS={mh_ess:.0f}  "
         f"n_samples={len(mh_result['samples'])}  time={t_mh:.1f}s"
     )
 
@@ -372,14 +336,11 @@ def benchmark_problem(
         energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **pt_kwargs
     )
     t_pt = time.perf_counter() - t0
-    pt_energies_post = pt_result["energies"][burn_in:]
-    pt_ess = compute_ess(pt_energies_post)
     results["pt"] = {
         "best_energy": pt_result["best_energy"],
         "best_x": pt_result["best_x"],
         "acceptance_rate": pt_result["acceptance_rate"],
         "swap_rate": pt_result["swap_rate"],
-        "ess": pt_ess,
         "wall_time": t_pt,
         "energies": pt_result["energies"],
         "samples": pt_result["samples"],
@@ -388,7 +349,6 @@ def benchmark_problem(
         f"    best_E={pt_result['best_energy']:.4f}  "
         f"acc={pt_result['acceptance_rate']:.3f}  "
         f"swap={pt_result['swap_rate']:.3f}  "
-        f"ESS={pt_ess:.0f}  "
         f"n_samples={len(pt_result['samples'])}  time={t_pt:.1f}s"
     )
 
@@ -476,7 +436,7 @@ def plot_trajectories_2d(results_2d: dict):
 
 def plot_comparison(results_2d: dict, results_10d: dict):
     """Generate comparison plots for both problems."""
-    fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
     fig.suptitle(
         "SAMC vs MH vs Parallel Tempering",
         fontsize=14,
@@ -497,15 +457,8 @@ def plot_comparison(results_2d: dict, results_10d: dict):
         ax.set_title(f"{title}\nBest Energy")
         ax.set_ylabel("Energy")
 
-        # ESS bar chart
-        ax = axes[row, 1]
-        ess_vals = [results[m]["ess"] for m in methods]
-        ax.bar(labels, ess_vals, color=colors, alpha=0.8)
-        ax.set_title(f"{title}\nEffective Sample Size")
-        ax.set_ylabel("ESS")
-
         # Acceptance rate bar chart
-        ax = axes[row, 2]
+        ax = axes[row, 1]
         acc_vals = [results[m]["acceptance_rate"] for m in methods]
         ax.bar(labels, acc_vals, color=colors, alpha=0.8)
         ax.set_title(f"{title}\nAcceptance Rate")
@@ -513,7 +466,7 @@ def plot_comparison(results_2d: dict, results_10d: dict):
         ax.set_ylim(0, 1)
 
         # Wall-clock time bar chart
-        ax = axes[row, 3]
+        ax = axes[row, 2]
         time_vals = [results[m]["wall_time"] for m in methods]
         ax.bar(labels, time_vals, color=colors, alpha=0.8)
         ax.set_title(f"{title}\nWall-Clock Time")
@@ -562,8 +515,8 @@ def plot_comparison(results_2d: dict, results_10d: dict):
 def print_summary_table(results_2d: dict, results_10d: dict):
     """Print markdown-formatted summary table."""
     print("\n## Benchmark Results\n")
-    print("| Problem | Method | Best Energy | ESS | Acc. Rate | Time (s) |")
-    print("|---------|--------|-------------|-----|-----------|----------|")
+    print("| Problem | Method | Best Energy | Acc. Rate | Time (s) |")
+    print("|---------|--------|-------------|-----------|----------|")
     for problem_name, results in [
         ("2D Multimodal", results_2d),
         ("10D Gaussian", results_10d),
@@ -573,7 +526,6 @@ def print_summary_table(results_2d: dict, results_10d: dict):
             print(
                 f"| {problem_name} | {label} | "
                 f"{r['best_energy']:.4f} | "
-                f"{r['ess']:.0f} | "
                 f"{r['acceptance_rate']:.3f} | "
                 f"{r['wall_time']:.1f} |"
             )
@@ -586,7 +538,7 @@ def main():
     save_every = 100  # same collection frequency for all methods
     burn_in_frac = 0.1  # discard first 10% as burn-in
 
-    proposal_std_2d = 0.25  # same proposal for all methods on 2D problem
+    proposal_std_2d = 0.05  # same proposal for all methods on 2D problem
     proposal_std_10d = 1.0  # same proposal for all methods on 10D problem
 
     results_2d = benchmark_problem(
@@ -629,7 +581,7 @@ def main():
         samc_kwargs={
             "n_partitions": 30,
             "e_min": 0.0,
-            "e_max": 15.0,
+            "e_max": 20.0,
             "proposal_std": proposal_std_10d,
             "gain": "ramp",
             "gain_kwargs": {
