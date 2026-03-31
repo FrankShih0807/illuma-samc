@@ -94,6 +94,7 @@ def run_mh(
     best_x, best_e = x.clone(), fx
     accept_count = 0
     energies = []
+    samples = [x.clone()]
 
     for _ in range(1, n_iters + 1):
         y = x + proposal_std * torch.randn(dim)
@@ -124,12 +125,14 @@ def run_mh(
             best_e = fx
             best_x = x.clone()
         energies.append(fx)
+        samples.append(x.clone())
 
     return {
         "best_energy": best_e,
         "best_x": best_x,
         "acceptance_rate": accept_count / n_iters,
         "energies": torch.tensor(energies),
+        "samples": torch.stack(samples),
     }
 
 
@@ -170,6 +173,7 @@ def run_parallel_tempering(
     accept_counts = [0] * n_replicas
     swap_count = 0
     swap_attempts = 0
+    cold_samples = [states[0].clone()]
 
     for it in range(1, n_iters + 1):
         # MH step for each replica
@@ -205,6 +209,8 @@ def run_parallel_tempering(
 
             energies_list[i].append(fxs[i])
 
+        cold_samples.append(states[0].clone())
+
         # Replica swaps
         if it % swap_interval == 0:
             for i in range(n_replicas - 1):
@@ -222,6 +228,7 @@ def run_parallel_tempering(
         "acceptance_rate": accept_counts[0] / n_iters,
         "swap_rate": swap_count / max(swap_attempts, 1),
         "energies": torch.tensor(energies_list[0]),
+        "samples": torch.stack(cold_samples),
     }
 
 
@@ -284,10 +291,12 @@ def benchmark_problem(
     samc_ess = compute_ess(samc_result.energy_history.flatten())
     results["samc"] = {
         "best_energy": samc_result.best_energy,
+        "best_x": samc_result.best_x,
         "acceptance_rate": samc_result.acceptance_rate,
         "ess": samc_ess,
         "wall_time": t_samc,
         "energies": samc_result.energy_history.flatten(),
+        "samples": samc_result.samples,
     }
     print(
         f"    best_E={samc_result.best_energy:.4f}  "
@@ -304,10 +313,12 @@ def benchmark_problem(
     mh_ess = compute_ess(mh_result["energies"])
     results["mh"] = {
         "best_energy": mh_result["best_energy"],
+        "best_x": mh_result["best_x"],
         "acceptance_rate": mh_result["acceptance_rate"],
         "ess": mh_ess,
         "wall_time": t_mh,
         "energies": mh_result["energies"],
+        "samples": mh_result["samples"],
     }
     print(
         f"    best_E={mh_result['best_energy']:.4f}  "
@@ -324,11 +335,13 @@ def benchmark_problem(
     pt_ess = compute_ess(pt_result["energies"])
     results["pt"] = {
         "best_energy": pt_result["best_energy"],
+        "best_x": pt_result["best_x"],
         "acceptance_rate": pt_result["acceptance_rate"],
         "swap_rate": pt_result["swap_rate"],
         "ess": pt_ess,
         "wall_time": t_pt,
         "energies": pt_result["energies"],
+        "samples": pt_result["samples"],
     }
     print(
         f"    best_E={pt_result['best_energy']:.4f}  "
@@ -338,6 +351,86 @@ def benchmark_problem(
     )
 
     return results
+
+
+def plot_trajectories_2d(results_2d: dict):
+    """Plot 2D sample trajectories over the energy landscape contour."""
+    # Build energy landscape grid
+    grid_n = 200
+    xx = torch.linspace(-1.1, 1.1, grid_n)
+    yy = torch.linspace(-1.1, 1.1, grid_n)
+    X, Y = torch.meshgrid(xx, yy, indexing="xy")
+    coords = torch.stack([X.flatten(), Y.flatten()], dim=-1)
+    Z, _ = cost_2d(coords)
+    Z = Z.reshape(grid_n, grid_n).numpy()
+
+    methods = ["samc", "mh", "pt"]
+    labels = ["SAMC", "MH", "Parallel Tempering"]
+    colors = ["#2196F3", "#FF9800", "#4CAF50"]
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+    fig.suptitle(
+        "Sample Trajectories on 2D Multimodal Landscape",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    for ax, method, label, color in zip(axes, methods, labels, colors):
+        # Energy contour background
+        ax.contourf(
+            xx.numpy(),
+            yy.numpy(),
+            Z,
+            levels=40,
+            cmap="viridis",
+            alpha=0.6,
+        )
+
+        # Subsample trajectory for visibility
+        samples = results_2d[method]["samples"]
+        if samples.dim() == 3:
+            # Multi-chain: take first chain
+            samples = samples[0]
+        samples = samples.numpy()
+        n = len(samples)
+        step = max(1, n // 3000)
+        sx, sy = samples[::step, 0], samples[::step, 1]
+
+        # Plot trajectory as line + scatter
+        ax.plot(sx, sy, color=color, alpha=0.15, linewidth=0.3, zorder=2)
+        ax.scatter(sx, sy, c=color, s=0.5, alpha=0.4, zorder=3)
+
+        # Mark best point
+        best_x = results_2d[method].get("best_x", None)
+        if best_x is None and "samples" in results_2d[method]:
+            best_x = results_2d[method]["samples"][0]
+        if best_x is not None:
+            if isinstance(best_x, torch.Tensor):
+                best_x = best_x.numpy()
+            ax.scatter(
+                best_x[0],
+                best_x[1],
+                c="red",
+                s=80,
+                marker="*",
+                zorder=5,
+                edgecolors="white",
+                linewidths=0.5,
+                label=f"Best E={results_2d[method]['best_energy']:.3f}",
+            )
+
+        ax.set_xlim(-1.15, 1.15)
+        ax.set_ylim(-1.15, 1.15)
+        ax.set_title(f"{label}\n(acc={results_2d[method]['acceptance_rate']:.3f})")
+        ax.set_xlabel("x₁")
+        ax.set_ylabel("x₂")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.set_aspect("equal")
+
+    plt.tight_layout()
+    plt.savefig("benchmarks/trajectory_comparison.png", dpi=200, bbox_inches="tight")
+    plt.close()
+    print("Plot saved to benchmarks/trajectory_comparison.png")
 
 
 def plot_comparison(results_2d: dict, results_10d: dict):
@@ -505,6 +598,7 @@ def main():
         },
     )
 
+    plot_trajectories_2d(results_2d)
     plot_comparison(results_2d, results_10d)
     print_summary_table(results_2d, results_10d)
 

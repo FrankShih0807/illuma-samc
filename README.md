@@ -6,6 +6,16 @@ Based on **SAMC by Faming Liang, Chuanhai Liu, and Raymond J. Carroll** — *"St
 
 SAMC is an adaptive MCMC algorithm that overcomes the local-trap problem by learning energy-dependent sampling weights on the fly. Unlike standard Metropolis-Hastings, SAMC explores all energy levels uniformly, making it effective for multimodal optimization and sampling.
 
+![illuma-samc demo](assets/demo_showcase.png)
+
+## Why SAMC?
+
+Standard Metropolis-Hastings gets trapped in local modes — it can spend an entire run exploring a single basin, completely missing the global optimum. SAMC fixes this by learning sampling weights that penalize over-visited energy regions and reward under-explored ones, producing **flat energy histograms** that guarantee uniform exploration across the entire landscape.
+
+**MH gets stuck. SAMC doesn't.**
+
+The figure above shows a 5-mode Gaussian mixture. SAMC discovers and samples all 5 modes with uniform bin visits, while MH remains trapped near its starting point. The flat bin visit histogram (bottom center) is the hallmark of SAMC — every energy level gets equal attention.
+
 ## Install
 
 ```bash
@@ -85,6 +95,7 @@ sampler.plot_diagnostics()  # weight trajectory, energy trace, bin visits, accep
 ## Examples
 
 ```bash
+python examples/demo_showcase.py      # All-in-one showcase (generates assets/demo_showcase.png)
 python examples/gaussian_mixture.py   # 4-mode Gaussian demo
 python examples/multimodal_2d.py      # Reproduce Liang's 2D experiment
 ```

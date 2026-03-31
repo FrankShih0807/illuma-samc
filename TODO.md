@@ -87,3 +87,19 @@
 - [x] Metrics: best energy found, ESS (effective sample size), acceptance rate, wall-clock time
 - [x] Generate comparison plots (save as PNG)
 - [x] Add benchmark results to README
+
+## Phase 2.5: Demo & Visualization
+
+### Step 11: Comprehensive Demo & README Visuals
+- [x] Run `python sample_code.py` and verify `samc_experiment.png` shows flat bin visits and global minimum found
+- [x] Run all existing examples and verify they work: `examples/multimodal_2d.py`, `examples/gaussian_mixture.py`
+- [x] Create `examples/demo_showcase.py` — a polished all-in-one demo that:
+  - Shows Simple API usage (energy-based, Gaussian mixture with 5+ modes)
+  - Shows Flexible API usage (custom proposal and acceptance)
+  - Generates a single high-quality figure with subplots: (1) target distribution contour, (2) SAMC samples overlaid, (3) weight convergence over time, (4) bin visit histogram showing flat exploration, (5) SAMC vs MH comparison showing MH stuck in one mode while SAMC explores all
+  - Save as `assets/demo_showcase.png` (300 DPI, publication quality)
+- [x] Create `assets/` directory for README images
+- [x] Update `README.md` to embed `assets/demo_showcase.png` prominently — this is the selling point visual
+- [x] Add a "Why SAMC?" section to README showing the SAMC vs MH comparison: "MH gets stuck. SAMC doesn't."
+- [x] Run full test suite: `pytest -v` and ensure 100% pass
+- [x] Commit and push
