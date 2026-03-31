@@ -38,10 +38,28 @@ class TestSimpleMode:
         assert isinstance(result, SAMCResult)
         assert result.samples.shape == (100, 2)
         assert result.log_weights.shape == (10,)
+        assert result.sample_log_weights.shape == (100,)
         assert result.energy_history.shape == (1000,)
         assert result.bin_counts.shape == (10,)
         assert 0.0 <= result.acceptance_rate <= 1.0
         assert result.best_x.shape == (2,)
+
+    def test_importance_weights_sum_to_one(self):
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_partitions=10,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=2000, save_every=10, progress=False)
+        w = result.importance_weights
+        assert w.shape == (200,)
+        assert torch.allclose(w.sum(), torch.tensor(1.0), atol=1e-5)
+        assert (w >= 0).all()
 
     def test_state_stored_on_sampler(self):
         torch.manual_seed(0)
@@ -223,6 +241,7 @@ class TestMultiChain:
         # (N, n_saved, dim)
         assert result.samples.shape == (n_chains, 100, 2)
         assert result.log_weights.shape == (10,)
+        assert result.sample_log_weights.shape == (n_chains, 100)
         # energy_history: (n_steps, N)
         assert result.energy_history.shape == (1000, n_chains)
         assert result.bin_counts.shape == (10,)

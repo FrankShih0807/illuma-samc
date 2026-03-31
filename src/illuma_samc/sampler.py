@@ -20,15 +20,49 @@ except ImportError:  # pragma: no cover
 
 @dataclass
 class SAMCResult:
-    """Container for SAMC run results."""
+    """Container for SAMC run results.
+
+    Attributes
+    ----------
+    samples : Tensor
+        Raw SAMC samples (drawn from the flattened distribution).
+    log_weights : Tensor
+        Final theta vector (log partition weights per bin).
+    sample_log_weights : Tensor
+        Per-sample importance log-weights for reweighting to the target
+        distribution: ``-theta[bin(sample)]``. Use ``self.importance_weights``
+        for normalized weights that sum to 1.
+    energy_history : Tensor
+        Energy at every iteration.
+    bin_counts : Tensor
+        Number of visits per energy bin.
+    acceptance_rate : float
+    best_x : Tensor
+    best_energy : float
+    """
 
     samples: torch.Tensor
     log_weights: torch.Tensor
+    sample_log_weights: torch.Tensor
     energy_history: torch.Tensor
     bin_counts: torch.Tensor
     acceptance_rate: float
     best_x: torch.Tensor
     best_energy: float
+
+    @property
+    def importance_weights(self) -> torch.Tensor:
+        """Normalized importance weights for recovering the target distribution.
+
+        SAMC samples from a flattened distribution. To compute expectations
+        under the true target, weight each sample by these values::
+
+            w = result.importance_weights
+            mean_x = (w.unsqueeze(-1) * result.samples).sum(0)
+        """
+        log_w = self.sample_log_weights
+        log_w = log_w - torch.logsumexp(log_w, dim=0)
+        return torch.exp(log_w)
 
 
 class SAMC:
@@ -229,6 +263,7 @@ class SAMC:
         best_x = x.clone()
         best_energy = fx_val
         samples: list[torch.Tensor] = []
+        sample_bins: list[int] = []
         energy_history: list[float] = []
         accept_count = 0
 
@@ -285,6 +320,7 @@ class SAMC:
 
             if it % save_every == 0:
                 samples.append(x.clone())
+                sample_bins.append(self._partition.assign(fx))
 
         self.log_weights = theta
         self.energy_history = energy_history
@@ -297,9 +333,17 @@ class SAMC:
             torch.stack(samples) if samples else torch.empty(0, self._dim, device=device)
         )
 
+        # Per-sample importance log-weights: -theta[bin] reweights from flat to target
+        if sample_bins:
+            bin_idx = torch.tensor(sample_bins, dtype=torch.long)
+            sample_log_w = -theta[bin_idx].float().to(device)
+        else:
+            sample_log_w = torch.empty(0, device=device)
+
         return SAMCResult(
             samples=samples_tensor,
             log_weights=theta.clone(),
+            sample_log_weights=sample_log_w,
             energy_history=torch.tensor(energy_history, device=device),
             bin_counts=counts.clone(),
             acceptance_rate=accept_count / n_steps,
@@ -340,6 +384,7 @@ class SAMC:
 
         # Per-chain sample storage: list of (N, dim) snapshots
         samples: list[torch.Tensor] = []
+        sample_bins_per_step: list[list[int]] = []  # list of [N] bin indices per save
         energy_history: list[torch.Tensor] = []
         accept_count = 0
         total_decisions = 0
@@ -405,6 +450,9 @@ class SAMC:
 
             if it % save_every == 0:
                 samples.append(x.clone())  # (N, dim)
+                sample_bins_per_step.append(
+                    [self._partition.assign(fx[c]) for c in range(n_chains)]
+                )
 
         acc_rate = accept_count / total_decisions if total_decisions > 0 else 0.0
 
@@ -422,12 +470,22 @@ class SAMC:
         else:
             samples_tensor = torch.empty(n_chains, 0, self._dim, device=device)
 
+        # Per-sample importance log-weights: -theta[bin] → (N, n_saved)
+        if sample_bins_per_step:
+            # (n_saved, N)
+            bin_idx = torch.tensor(sample_bins_per_step, dtype=torch.long)
+            sample_log_w = -theta[bin_idx].float().to(device)  # (n_saved, N)
+            sample_log_w = sample_log_w.permute(1, 0)  # (N, n_saved)
+        else:
+            sample_log_w = torch.empty(n_chains, 0, device=device)
+
         # energy_history: list of (N,) → (n_steps, N) on device
         energy_tensor = torch.stack(energy_history).to(device)  # (n_steps, N)
 
         return SAMCResult(
             samples=samples_tensor,
             log_weights=theta.to(device).clone(),
+            sample_log_weights=sample_log_w,
             energy_history=energy_tensor,
             bin_counts=counts.to(device).clone(),
             acceptance_rate=acc_rate,
