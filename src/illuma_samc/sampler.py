@@ -365,12 +365,20 @@ class SAMC:
                 samples.append(x.clone())
                 sample_bins.append(cur_bin)  # keep -1 for out-of-range
 
+        acc_rate = accept_count / n_steps
         self.log_weights = theta
         self.energy_history = energy_history
         self.bin_counts = counts
-        self.acceptance_rate = accept_count / n_steps
+        self.acceptance_rate = acc_rate
         self.best_x = best_x
         self.best_energy = best_energy
+
+        if acc_rate < 0.01:
+            warnings.warn(
+                f"Very low acceptance rate ({acc_rate:.4f}). Consider increasing "
+                f"proposal_std or widening the partition range.",
+                stacklevel=2,
+            )
 
         samples_tensor = (
             torch.stack(samples) if samples else torch.empty(0, self._dim, device=device)
@@ -535,6 +543,13 @@ class SAMC:
         self.acceptance_rate = acc_rate
         self.best_x = best_x
         self.best_energy = best_energy
+
+        if acc_rate < 0.01:
+            warnings.warn(
+                f"Very low acceptance rate ({acc_rate:.4f}). Consider increasing "
+                f"proposal_std or widening the partition range.",
+                stacklevel=2,
+            )
 
         # samples: list of (N, dim) → (N, n_saved, dim)
         if samples:
