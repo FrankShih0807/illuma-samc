@@ -133,6 +133,7 @@ class SAMC:
         *,
         dim: int,
         n_partitions: int = 42,
+        n_bins: int | None = None,
         e_min: float = -8.2,
         e_max: float = 0.0,
         proposal_std: float = 0.25,
@@ -144,6 +145,10 @@ class SAMC:
         partition_fn: Partition | None = None,
         gain_kwargs: dict | None = None,
     ) -> None:
+        # n_bins is an alias for n_partitions
+        if n_bins is not None:
+            n_partitions = n_bins
+
         # --- Input validation ---
         if dim <= 0:
             raise ValueError("dim must be positive")

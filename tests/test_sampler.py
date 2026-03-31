@@ -158,7 +158,6 @@ class TestUXWarnings:
         assert hasattr(Partition, "edges")
 
     def test_n_bins_alias_in_samc(self):
-        torch.manual_seed(42)
         s1 = SAMC(
             energy_fn=_quadratic_energy,
             dim=2,
@@ -167,7 +166,6 @@ class TestUXWarnings:
             e_max=5.0,
             gain="1/t",
         )
-        torch.manual_seed(42)
         s2 = SAMC(
             energy_fn=_quadratic_energy,
             dim=2,
@@ -176,9 +174,10 @@ class TestUXWarnings:
             e_max=5.0,
             gain="1/t",
         )
-        r1 = s1.run(n_steps=100, progress=False)
-        r2 = s2.run(n_steps=100, progress=False)
+        r1 = s1.run(n_steps=100, seed=42, progress=False)
+        r2 = s2.run(n_steps=100, seed=42, progress=False)
         assert torch.allclose(r1.samples, r2.samples)
+        assert s1._n_partitions == s2._n_partitions == 10
 
 
 class TestInputValidation:
