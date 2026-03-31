@@ -138,7 +138,7 @@ class SAMC:
         self._samples: list[torch.Tensor] = []
 
     def _compute_energy(self, x: torch.Tensor) -> tuple[torch.Tensor, bool]:
-        """Compute energy. Returns (energy_scalar, in_region)."""
+        """Compute energy for a single state. Returns (energy_scalar, in_region)."""
         if self._energy_fn is None:
             raise RuntimeError("No energy_fn provided and no log_accept_fn — cannot compute energy")
         result = self._energy_fn(x)
@@ -148,6 +148,31 @@ class SAMC:
                 in_region = in_region.item()
             return energy.squeeze(), bool(in_region)
         return result.squeeze(), True
+
+    def _compute_energy_batch(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute energy for a batch of states.
+
+        Parameters
+        ----------
+        x : Tensor
+            Shape ``(N, dim)``.
+
+        Returns
+        -------
+        energies : Tensor
+            Shape ``(N,)``.
+        in_region : Tensor
+            Boolean tensor, shape ``(N,)``.
+        """
+        if self._energy_fn is None:
+            raise RuntimeError("No energy_fn provided — cannot compute energy")
+        result = self._energy_fn(x)
+        if isinstance(result, tuple):
+            energy, in_region = result
+            if not isinstance(in_region, torch.Tensor):
+                in_region = torch.tensor(in_region, dtype=torch.bool, device=x.device)
+            return energy.view(-1), in_region.view(-1).bool()
+        return result.view(-1), torch.ones(x.shape[0], dtype=torch.bool, device=x.device)
 
     def run(
         self,
@@ -164,7 +189,8 @@ class SAMC:
         n_steps : int
             Number of MCMC iterations.
         x0 : Tensor, optional
-            Initial state. Defaults to zeros.
+            Initial state. Shape ``(dim,)`` for single chain or ``(N, dim)``
+            for *N* parallel chains with shared weights.
         save_every : int
             Store a sample every this many iterations.
         progress : bool
@@ -173,7 +199,21 @@ class SAMC:
         Returns
         -------
         SAMCResult
+            For single chain, ``samples`` has shape ``(n_saved, dim)``.
+            For multi-chain, ``samples`` has shape ``(N, n_saved, dim)``.
         """
+        if x0 is not None and x0.dim() == 2:
+            return self._run_multi_chain(n_steps, x0, save_every=save_every, progress=progress)
+        return self._run_single_chain(n_steps, x0, save_every=save_every, progress=progress)
+
+    def _run_single_chain(
+        self,
+        n_steps: int,
+        x0: torch.Tensor | None = None,
+        *,
+        save_every: int = 100,
+        progress: bool = True,
+    ) -> SAMCResult:
         device = self._device
 
         # Initialize state
@@ -263,6 +303,134 @@ class SAMC:
             energy_history=torch.tensor(energy_history, device=device),
             bin_counts=counts.clone(),
             acceptance_rate=accept_count / n_steps,
+            best_x=best_x.clone(),
+            best_energy=best_energy,
+        )
+
+    def _run_multi_chain(
+        self,
+        n_steps: int,
+        x0: torch.Tensor,
+        *,
+        save_every: int = 100,
+        progress: bool = True,
+    ) -> SAMCResult:
+        """Run N parallel chains with shared theta weights.
+
+        Proposals and energy evaluations are batched across chains.
+        Accept/reject and weight updates are sequential per chain to
+        maintain correctness of the shared theta vector.
+        """
+        device = self._device
+        n_chains = x0.shape[0]
+
+        # Initialize states — shape (N, dim)
+        x = x0.to(device).clone()
+        fx, in_region = self._compute_energy_batch(x)  # (N,), (N,)
+
+        # Shared theta on CPU (small vector, updated every step)
+        theta = torch.zeros(self._n_partitions, dtype=torch.float64)
+        counts = torch.zeros(self._n_partitions, dtype=torch.float64)
+        refden = 1.0 / self._n_partitions
+
+        best_x = x[0].clone()
+        best_energy = fx.min().item()
+        best_idx = fx.argmin().item()
+        best_x = x[best_idx].clone()
+
+        # Per-chain sample storage: list of (N, dim) snapshots
+        samples: list[torch.Tensor] = []
+        energy_history: list[torch.Tensor] = []
+        accept_count = 0
+        total_decisions = 0
+
+        iterator = range(1, n_steps + 1)
+        if progress and tqdm is not None:
+            iterator = tqdm(iterator, desc=f"SAMC ({n_chains} chains)")
+
+        for it in iterator:
+            delta = self._gain(it)
+
+            # --- Batch propose across all chains ---
+            x_new = self._proposal.propose(x)  # (N, dim)
+
+            # --- Batch energy evaluation ---
+            fy, in_reg = self._compute_energy_batch(x_new)  # (N,), (N,)
+
+            # --- Sequential accept/reject per chain (shared theta) ---
+            for c in range(n_chains):
+                fx_c = fx[c].item()
+                fy_c = fy[c].item()
+                k1 = self._partition.assign(fx[c])
+                k2 = self._partition.assign(fy[c])
+
+                # Log acceptance ratio
+                if self._log_accept_fn is not None:
+                    log_r = self._log_accept_fn(x[c], x_new[c], fx[c], fy[c])
+                else:
+                    log_r = theta[k1].item() - theta[k2].item() - fy_c + fx_c
+
+                # Proposal correction (for asymmetric proposals)
+                if hasattr(self._proposal, "log_ratio"):
+                    log_r += self._proposal.log_ratio(x[c], x_new[c])
+
+                # Accept/reject
+                if not in_reg[c].item():
+                    accept = False
+                elif log_r > 0:
+                    accept = True
+                else:
+                    accept = torch.rand(1).item() < math.exp(log_r)
+
+                if accept:
+                    x[c] = x_new[c]
+                    fx[c] = fy[c]
+                    theta -= delta * refden
+                    theta[k2] += delta
+                    counts[k2] += 1
+                    accept_count += 1
+                else:
+                    theta -= delta * refden
+                    theta[k1] += delta
+                    counts[k1] += 1
+
+                total_decisions += 1
+
+                if fx[c].item() < best_energy:
+                    best_energy = fx[c].item()
+                    best_x = x[c].clone()
+
+            # Store per-step energy for all chains
+            energy_history.append(fx.clone().cpu())
+
+            if it % save_every == 0:
+                samples.append(x.clone())  # (N, dim)
+
+        acc_rate = accept_count / total_decisions if total_decisions > 0 else 0.0
+
+        self.log_weights = theta.to(device)
+        self.energy_history = energy_history
+        self.bin_counts = counts.to(device)
+        self.acceptance_rate = acc_rate
+        self.best_x = best_x
+        self.best_energy = best_energy
+
+        # samples: list of (N, dim) → (N, n_saved, dim)
+        if samples:
+            stacked = torch.stack(samples)  # (n_saved, N, dim)
+            samples_tensor = stacked.permute(1, 0, 2)  # (N, n_saved, dim)
+        else:
+            samples_tensor = torch.empty(n_chains, 0, self._dim, device=device)
+
+        # energy_history: list of (N,) → (n_steps, N) on device
+        energy_tensor = torch.stack(energy_history).to(device)  # (n_steps, N)
+
+        return SAMCResult(
+            samples=samples_tensor,
+            log_weights=theta.to(device).clone(),
+            energy_history=energy_tensor,
+            bin_counts=counts.to(device).clone(),
+            acceptance_rate=acc_rate,
             best_x=best_x.clone(),
             best_energy=best_energy,
         )
