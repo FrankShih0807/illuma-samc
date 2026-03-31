@@ -24,16 +24,13 @@ import yaml
 
 from illuma_samc import SAMC
 from illuma_samc.baselines import run_mh, run_parallel_tempering
-from illuma_samc.problems import cost_2d, gaussian_mixture_10d
+from illuma_samc.problems import PROBLEMS
 
 # ────────────────────────────────────────────────────────
 # Model registry
 # ────────────────────────────────────────────────────────
 
-MODELS = {
-    "2d": {"energy_fn": cost_2d, "dim": 2},
-    "10d": {"energy_fn": gaussian_mixture_10d, "dim": 10},
-}
+MODELS = {key: {"energy_fn": val["energy_fn"], "dim": val["dim"]} for key, val in PROBLEMS.items()}
 
 
 # ────────────────────────────────────────────────────────
