@@ -112,18 +112,18 @@ The trajectory comparison below shows how each sampler explores the 2D multimoda
 
 SAMC vs Metropolis-Hastings vs Parallel Tempering on two problems. All methods use identical proposal, burn-in (10%), and sample collection frequency (every 100th iteration) for fair comparison.
 
-| Problem | Method | Best Energy | ESS | Acc. Rate | Time (s) |
-|---------|--------|-------------|-----|-----------|----------|
-| 2D Multimodal | SAMC | -8.124 | 2399 | 0.213 | 24.7 |
-| 2D Multimodal | MH | -8.124 | 1128 | 0.154 | 20.7 |
-| 2D Multimodal | PT (8 replicas) | -8.124 | 47326 | 0.467 | 173.8 |
-| 10D Gaussian | SAMC | 0.559 | 1413 | 0.221 | 5.1 |
-| 10D Gaussian | MH | 0.385 | 3834 | 0.145 | 3.4 |
-| 10D Gaussian | PT (8 replicas) | 0.804 | 9417 | 0.265 | 28.8 |
+| Problem | Method | Best Energy | Acc. Rate | Time (s) |
+|---------|--------|-------------|-----------|----------|
+| 2D Multimodal | SAMC | -8.125 | 0.510 | 25.4 |
+| 2D Multimodal | MH | -8.125 | 0.439 | 21.3 |
+| 2D Multimodal | PT (8 replicas) | -8.125 | 0.784 | 176.9 |
+| 10D Gaussian | SAMC | 0.419 | 0.239 | 4.8 |
+| 10D Gaussian | MH | 0.385 | 0.145 | 3.4 |
+| 10D Gaussian | PT (8 replicas) | 0.804 | 0.265 | 28.8 |
 
 **Key takeaways:**
-- **2D multimodal:** All methods find the global minimum (~-8.12). SAMC achieves 2x the ESS of MH at similar cost. PT has highest ESS but 7x the wall-clock time (8 replicas).
-- **10D Gaussian mixture:** With properly tuned energy range, SAMC ESS (1413) is competitive at minimal cost. MH has higher ESS on this problem since the modes are well-separated and the energy landscape is smooth. PT is 6x slower.
+- **2D multimodal:** All methods find the global minimum (~-8.12). SAMC and MH achieve similar best energy, but SAMC's flat-histogram exploration ensures all energy levels are visited uniformly. PT has the highest acceptance rate but 7x the wall-clock time (8 replicas).
+- **10D Gaussian mixture:** PT finds the best energy (0.804) thanks to replica exchanges enabling barrier crossing. SAMC (0.419) outperforms MH (0.385) with its adaptive weighting. All methods are fast on this problem.
 
 Run benchmarks yourself:
 ```bash

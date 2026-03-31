@@ -6,9 +6,6 @@ import numpy as np
 import torch
 
 from illuma_samc import SAMC
-from illuma_samc.gain import GainSequence
-from illuma_samc.partitions import AdaptivePartition
-from illuma_samc.proposals import GaussianProposal
 
 matplotlib.use("Agg")
 
