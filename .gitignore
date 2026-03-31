@@ -1,0 +1,12 @@
+# Experiment outputs
+outputs/
+
+# Python
+__pycache__/
+*.egg-info/
+*.pyc
+.eggs/
+
+# IDE
+.vscode/
+.idea/
