@@ -512,21 +512,33 @@ def plot_comparison(results_2d: dict, results_10d: dict):
     print("Plot saved to benchmarks/energy_traces.png")
 
 
-def print_summary_table(results_2d: dict, results_10d: dict):
-    """Print markdown-formatted summary table."""
+def print_summary_table(
+    results_2d: dict,
+    results_10d: dict,
+    n_iters_2d: int,
+    n_iters_10d: int,
+    n_replicas: int = 8,
+):
+    """Print markdown-formatted summary table with total energy evaluations."""
     print("\n## Benchmark Results\n")
-    print("| Problem | Method | Best Energy | Acc. Rate | Time (s) |")
-    print("|---------|--------|-------------|-----------|----------|")
-    for problem_name, results in [
-        ("2D Multimodal", results_2d),
-        ("10D Gaussian", results_10d),
+    print("| Problem | Method | Best Energy | Acc. Rate | Energy Evals | Time (s) |")
+    print("|---------|--------|-------------|-----------|--------------|----------|")
+    for problem_name, results, n_iters in [
+        ("2D Multimodal", results_2d, n_iters_2d),
+        ("10D Gaussian", results_10d, n_iters_10d),
     ]:
         for m, label in [("samc", "SAMC"), ("mh", "MH"), ("pt", "PT")]:
             r = results[m]
+            evals = n_iters * n_replicas if m == "pt" else n_iters
+            if evals >= 1_000_000:
+                evals_str = f"{evals / 1_000_000:.1f}M"
+            else:
+                evals_str = f"{evals // 1000}K"
             print(
                 f"| {problem_name} | {label} | "
                 f"{r['best_energy']:.4f} | "
                 f"{r['acceptance_rate']:.3f} | "
+                f"{evals_str} | "
                 f"{r['wall_time']:.1f} |"
             )
 
@@ -603,7 +615,13 @@ def main():
 
     plot_trajectories_2d(results_2d)
     plot_comparison(results_2d, results_10d)
-    print_summary_table(results_2d, results_10d)
+    print_summary_table(
+        results_2d,
+        results_10d,
+        n_iters_2d=n_iters_2d,
+        n_iters_10d=n_iters_10d,
+        n_replicas=8,
+    )
 
 
 if __name__ == "__main__":

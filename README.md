@@ -112,18 +112,19 @@ The trajectory comparison below shows how each sampler explores the 2D multimoda
 
 SAMC vs Metropolis-Hastings vs Parallel Tempering on two problems. All methods use identical proposal, burn-in (10%), and sample collection frequency (every 100th iteration) for fair comparison.
 
-| Problem | Method | Best Energy | Acc. Rate | Time (s) |
-|---------|--------|-------------|-----------|----------|
-| 2D Multimodal | SAMC | -8.125 | 0.510 | 25.4 |
-| 2D Multimodal | MH | -8.125 | 0.439 | 21.3 |
-| 2D Multimodal | PT (8 replicas) | -8.125 | 0.784 | 176.9 |
-| 10D Gaussian | SAMC | 0.419 | 0.239 | 4.8 |
-| 10D Gaussian | MH | 0.385 | 0.145 | 3.4 |
-| 10D Gaussian | PT (8 replicas) | 0.804 | 0.265 | 28.8 |
+| Problem | Method | Best Energy | Acc. Rate | Energy Evals | Time (s) |
+|---------|--------|-------------|-----------|--------------|----------|
+| 2D Multimodal | SAMC | -8.125 | 0.510 | 500K | 25.4 |
+| 2D Multimodal | MH | -8.125 | 0.439 | 500K | 21.3 |
+| 2D Multimodal | PT (8 replicas) | -8.125 | 0.784 | 4.0M | 176.9 |
+| 10D Gaussian | SAMC | 0.419 | 0.239 | 200K | 4.8 |
+| 10D Gaussian | MH | 0.385 | 0.145 | 200K | 3.4 |
+| 10D Gaussian | PT (8 replicas) | 0.804 | 0.265 | 1.6M | 28.8 |
 
 **Key takeaways:**
-- **2D multimodal:** All methods find the global minimum (~-8.12). SAMC and MH achieve similar best energy, but SAMC's flat-histogram exploration ensures all energy levels are visited uniformly. PT has the highest acceptance rate but 7x the wall-clock time (8 replicas).
-- **10D Gaussian mixture:** PT finds the best energy (0.804) thanks to replica exchanges enabling barrier crossing. SAMC (0.419) outperforms MH (0.385) with its adaptive weighting. All methods are fast on this problem.
+- **Compute fairness:** PT runs 8 replicas per iteration, so it evaluates the energy function 8x more than SAMC or MH at the same iteration count. The "Energy Evals" column makes this cost transparent.
+- **2D multimodal:** All methods find the global minimum (~-8.12). SAMC and MH achieve similar best energy at equal compute cost, but SAMC's flat-histogram exploration ensures all energy levels are visited uniformly. PT has the highest acceptance rate but uses 8x the energy evaluations.
+- **10D Gaussian mixture:** PT finds the best energy (0.804) thanks to replica exchanges, but at 8x the compute cost. SAMC (0.419) outperforms MH (0.385) at identical cost via adaptive weighting.
 
 Run benchmarks yourself:
 ```bash
