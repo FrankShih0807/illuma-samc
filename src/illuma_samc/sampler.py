@@ -238,6 +238,7 @@ class SAMC:
         *,
         save_every: int = 100,
         progress: bool = True,
+        seed: int | None = None,
     ) -> SAMCResult:
         """Run the SAMC sampler.
 
@@ -259,6 +260,8 @@ class SAMC:
             For single chain, ``samples`` has shape ``(n_saved, dim)``.
             For multi-chain, ``samples`` has shape ``(N, n_saved, dim)``.
         """
+        if seed is not None:
+            torch.manual_seed(seed)
         if n_steps <= 0:
             raise ValueError("n_steps must be positive")
         if x0 is not None and x0.dim() == 2:
