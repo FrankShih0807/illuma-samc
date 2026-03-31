@@ -208,24 +208,75 @@ For UX improvements and input validation, the same pipeline applies:
 - [x] Update `__init__.py` with subpackage re-exports
 - [x] All tests pass, ruff clean, CLI commands verified
 
-## Phase 3: Production Hardening (PARKED — do not start)
+## Phase 3: Ablation Study & Production Hardening
 
-> Recorded for future planning. Do not begin until Phase 2.5 is complete and Frank approves.
+> Progressive difficulty: learn tuning intuitions on cheap models, apply to harder ones.
 
-### Checkpointing & Serialization
-- Save/load sampler state (theta, partition edges, config) to resume interrupted runs
-- Export results to common formats
+### Step 23: Infrastructure Prep (3A)
+- [ ] Add Rosenbrock 2D problem (`src/illuma_samc/problems/rosenbrock_2d.py`) — narrow curved valley, global min at (1,1) with E=0
+- [ ] Add Rastrigin 20D problem (`src/illuma_samc/problems/rastrigin_20d.py`) — ~10^20 local minima, global min at origin with E=0
+- [ ] Register new problems in `problems/__init__.py` and `train.py` MODELS dict
+- [ ] Add default configs for `rosenbrock` and `rastrigin` models in `configs/samc.yaml`, `mh.yaml`, `pt.yaml`
+- [ ] Add mode coverage metric: count distinct modes visited per problem (post-hoc analysis)
+- [ ] Add bin visit flatness metric: `1 - std(bin_counts) / mean(bin_counts)`, standardize in results.json
+- [ ] Create `ablation/sweep.py` — reads YAML sweep spec, generates `train.py` commands, supports `--dry-run` and `--parallel N`
+- [ ] Create `ablation/analyze.py` — loads results from a group dir, computes derived metrics, generates plots + CSV
+- [ ] Add `--partition_type {uniform,adaptive,quantile}`, `--n_chains`, `--gain_t0` args to `train.py`
+- [ ] Verify infra with a quick smoke test: 3 algos x 2 models x 1 seed
 
-### Adaptive Proposal Tuning
-- Auto-tune proposal_std based on acceptance rate (target ~0.234 for high-dim)
-- Dual averaging or Robbins-Monro style adaptation during warmup
+### Step 24: 2D Multimodal Ablations (3B) — cheapest, full sweeps
+> Run ALL ablation groups on 2D only. Each group varies ONE factor, 3 seeds each.
 
-### Convergence Diagnostics
-- Weight stabilization test (are theta values converging?)
-- Multi-chain R-hat diagnostic
-- Geweke test on energy trace
+- [ ] SAMC gain schedule: 1/t, log, ramp (9 runs)
+- [ ] SAMC gain t0: 100, 500, 1K, 5K, 10K with gain=1/t (15 runs)
+- [ ] SAMC n_bins: 10, 20, 42, 80, 150 (15 runs)
+- [ ] SAMC energy range: e_max in {-2, 0, 5, 10, 20} with e_min=-8.2 (15 runs)
+- [ ] SAMC proposal_std: 0.01, 0.05, 0.1, 0.5, 1.0, 2.0 (18 runs)
+- [ ] SAMC partition type: uniform, adaptive, quantile (9 runs)
+- [ ] SAMC multi-chain: 1, 2, 4, 8 chains (12 runs)
+- [ ] MH proposal_std: 0.01, 0.05, 0.1, 0.5, 1.0, 2.0 (18 runs)
+- [ ] MH temperature: 0.1, 0.5, 1.0, 2.0, 5.0 (15 runs)
+- [ ] PT n_replicas: 2, 4, 8, 16, 32 (15 runs)
+- [ ] PT t_max: 2, 5, 10, 20, 50 (15 runs)
+- [ ] PT swap_interval: 1, 5, 10, 50, 100 (15 runs)
+- [ ] **Deliverable**: `ablation/reports/2d_insights.md` — sensitivity ranking, optimal ranges, tuning heuristics, SAMC vs MH vs PT analysis
 
-### Scaling Study
-- Benchmark SAMC vs MH vs PT across dimensions: 2, 10, 50, 100
-- Identify where SAMC shines vs breaks down
-- Guide recommendations for when to use SAMC
+### Step 25: Rosenbrock 2D Ablations (3C) — cheap, different geometry
+> Apply 2D heuristics as starting defaults. Narrower sweeps guided by Step 24 insights.
+
+- [ ] Set Rosenbrock defaults from 2D insights
+- [ ] Run narrowed sweeps on most impactful params (guided by 2D sensitivity ranking)
+- [ ] **Deliverable**: `ablation/reports/rosenbrock_insights.md` — validate/refine heuristics, note where narrow valley breaks assumptions
+
+### Step 26: 10D Gaussian Mixture Ablations (3D) — dimensionality scaling
+> Focus on params that mattered in 2D. Add scaling-specific questions.
+
+- [ ] Apply refined heuristics to set 10D defaults
+- [ ] Sweep only high-impact params from 2D analysis
+- [ ] Test scaling questions: does n_bins scale with dim? does proposal_std ~ 1/sqrt(dim)?
+- [ ] **Deliverable**: `ablation/reports/10d_insights.md` — scaling rules, dimensionality-specific heuristics
+
+### Step 27: Rastrigin 20D Ablations (3E) — hardest, minimal sweeps
+> Apply all accumulated heuristics. Only sweep 2-3 most impactful params.
+
+- [ ] Apply all heuristics to set Rastrigin defaults
+- [ ] Focus: can SAMC find global min? How many chains needed? Does gain schedule matter at this scale?
+- [ ] **Deliverable**: `ablation/reports/rastrigin_insights.md` — limits of SAMC, where it breaks down
+
+### Step 28: Cross-Algorithm Comparison (3F)
+- [ ] Best config per algo per problem (from ablation results), 10 seeds for tight error bars
+- [ ] Figure 1: Algo comparison at best hyperparams (bar chart with error bars)
+- [ ] Figure 2: Scaling with dimensionality (2D → 10D → 20D)
+- [ ] Figure 3: Robustness to proposal_std (SAMC vs MH overlay)
+- [ ] Figure 4: SAMC gain schedule convergence curves
+- [ ] Figure 5: Compute efficiency Pareto front (energy evals vs best energy)
+- [ ] Summary table for README: problem x algo x metrics
+- [ ] **Deliverable**: `ablation/reports/final_comparison.md` + all figures in `ablation/figures/`
+
+### Step 29: Production Hardening (after ablation insights)
+> Informed by ablation results — implement the features that actually matter.
+
+- [ ] Checkpointing: save/load sampler state (theta, partition, config) for interrupted runs
+- [ ] Adaptive proposal tuning: auto-tune proposal_std targeting optimal acceptance rate (informed by ablation)
+- [ ] Convergence diagnostics: weight stabilization test, multi-chain R-hat
+- [ ] Update README with ablation results, tuning guide, and recommendations
