@@ -82,6 +82,56 @@ def _multimodal_energy(x: torch.Tensor) -> torch.Tensor:
     )
 
 
+class TestInputValidation:
+    def test_e_min_ge_e_max(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="e_min must be less than e_max"):
+            SAMC(energy_fn=_quadratic_energy, dim=2, e_min=5.0, e_max=5.0)
+        with pytest.raises(ValueError, match="e_min must be less than e_max"):
+            SAMC(energy_fn=_quadratic_energy, dim=2, e_min=10.0, e_max=5.0)
+
+    def test_n_bins_le_zero(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="n_bins must be positive"):
+            SAMC(energy_fn=_quadratic_energy, dim=2, n_partitions=0)
+        with pytest.raises(ValueError, match="n_bins must be positive"):
+            SAMC(energy_fn=_quadratic_energy, dim=2, n_partitions=-5)
+
+    def test_dim_le_zero(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="dim must be positive"):
+            SAMC(energy_fn=_quadratic_energy, dim=0)
+        with pytest.raises(ValueError, match="dim must be positive"):
+            SAMC(energy_fn=_quadratic_energy, dim=-1)
+
+    def test_proposal_std_le_zero(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="proposal_std must be positive"):
+            SAMC(energy_fn=_quadratic_energy, dim=2, proposal_std=0.0)
+        with pytest.raises(ValueError, match="proposal_std must be positive"):
+            SAMC(energy_fn=_quadratic_energy, dim=2, proposal_std=-0.5)
+
+    def test_n_steps_le_zero(self):
+        import pytest
+
+        sampler = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+        )
+        with pytest.raises(ValueError, match="n_steps must be positive"):
+            sampler.run(n_steps=0, progress=False)
+        with pytest.raises(ValueError, match="n_steps must be positive"):
+            sampler.run(n_steps=-10, progress=False)
+
+
 class TestSimpleMode:
     def test_basic_run(self):
         torch.manual_seed(42)

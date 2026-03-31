@@ -143,6 +143,17 @@ class SAMC:
         partition_fn: Partition | None = None,
         gain_kwargs: dict | None = None,
     ) -> None:
+        # --- Input validation ---
+        if dim <= 0:
+            raise ValueError("dim must be positive")
+        if proposal_fn is None and proposal_std <= 0:
+            raise ValueError("proposal_std must be positive")
+        if partition_fn is None:
+            if n_partitions <= 0:
+                raise ValueError("n_bins must be positive")
+            if e_min >= e_max:
+                raise ValueError("e_min must be less than e_max")
+
         self._device = torch.device(device)
         self._dim = dim
 
@@ -247,6 +258,8 @@ class SAMC:
             For single chain, ``samples`` has shape ``(n_saved, dim)``.
             For multi-chain, ``samples`` has shape ``(N, n_saved, dim)``.
         """
+        if n_steps <= 0:
+            raise ValueError("n_steps must be positive")
         if x0 is not None and x0.dim() == 2:
             return self._run_multi_chain(n_steps, x0, save_every=save_every, progress=progress)
         return self._run_single_chain(n_steps, x0, save_every=save_every, progress=progress)
