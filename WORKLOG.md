@@ -38,6 +38,20 @@
 - **Blocked on:** Nothing — Phase 2.75 complete.
 - **Affects:** None.
 
+## [2026-03-31] Codebase Restructure (Step 22)
+- **Phase:** maintenance
+- **Status:** done
+- **Summary:**
+  - Extracted energy functions into `src/illuma_samc/problems/` with registry dict and per-problem modules (multimodal_2d.py, gaussian_10d.py).
+  - Extracted MH and PT baselines into `src/illuma_samc/baselines/` as standalone modules.
+  - Slimmed `benchmarks/vs_mh_pt.py` from 629 lines to ~330 (orchestration + plotting only).
+  - Updated `train.py` and `benchmarks/debug_10d.py` to import from new canonical locations.
+  - Added subpackage re-exports in `__init__.py`.
+  - All 72 tests pass, ruff clean, `train.py` and `compare_results.py` verified working.
+- **Decisions made:** Kept legacy aliases (cost_2d, gaussian_mixture_10d) as re-exports for backward compatibility. Problems module uses registry dict pattern for extensibility.
+- **Blocked on:** Nothing.
+- **Affects:** None.
+
 ## [2026-03-30] Phase 2 Complete: GPU, Parallel Chains, Verification, Benchmarks
 - **Phase:** generalizing
 - **Status:** done

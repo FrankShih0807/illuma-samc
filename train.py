@@ -22,13 +22,9 @@ from pathlib import Path
 import torch
 import yaml
 
-from benchmarks.vs_mh_pt import (
-    cost_2d,
-    gaussian_mixture_10d,
-    run_mh,
-    run_parallel_tempering,
-)
 from illuma_samc import SAMC
+from illuma_samc.baselines import run_mh, run_parallel_tempering
+from illuma_samc.problems import cost_2d, gaussian_mixture_10d
 
 # ────────────────────────────────────────────────────────
 # Model registry

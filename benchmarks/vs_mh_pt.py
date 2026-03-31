@@ -7,7 +7,6 @@ Two test problems:
 Metrics: best energy found, acceptance rate, wall-clock time.
 """
 
-import math
 import time
 
 import matplotlib
@@ -16,234 +15,12 @@ import numpy as np
 import torch
 
 from illuma_samc import SAMC
+from illuma_samc.baselines import run_mh, run_parallel_tempering
+from illuma_samc.problems import cost_2d, gaussian_mixture_10d
 
 matplotlib.use("Agg")
 
 
-# ────────────────────────────────────────────────────────
-# Test Problem 1: 2D multimodal cost (from sample_code.py)
-# ────────────────────────────────────────────────────────
-
-
-def cost_2d(z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Batch-compatible 2D multimodal cost. Returns (energy, in_region)."""
-    if z.dim() == 1:
-        z = z.unsqueeze(0)
-    x1, x2 = z[:, 0], z[:, 1]
-    out_of_bounds = (x1 < -1.1) | (x1 > 1.1) | (x2 < -1.1) | (x2 > 1.1)
-
-    d1 = x1 * torch.sin(20 * x2) + x2 * torch.sin(20 * x1)
-    sum1 = d1**2 * torch.cosh(torch.sin(10 * x1) * x1)
-    d2 = x1 * torch.cos(10 * x2) - x2 * torch.sin(10 * x1)
-    sum2 = d2**2 * torch.cosh(torch.cos(20 * x2) * x2)
-
-    energy = -sum1 - sum2
-    energy = torch.where(out_of_bounds, torch.tensor(1e100), energy)
-    in_region = ~out_of_bounds
-    return energy.squeeze(), in_region.squeeze()
-
-
-# ────────────────────────────────────────────────────────
-# Test Problem 2: 10D Gaussian mixture (well-separated)
-# ────────────────────────────────────────────────────────
-
-# 4 modes at distance 10 from origin in different directions
-_MODES_10D = torch.zeros(4, 10)
-_MODES_10D[0, 0] = 10.0
-_MODES_10D[1, 0] = -10.0
-_MODES_10D[2, 1] = 10.0
-_MODES_10D[3, 1] = -10.0
-
-
-def gaussian_mixture_10d(z: torch.Tensor) -> torch.Tensor:
-    """Batch-compatible 10D Gaussian mixture energy.
-
-    E(x) = -log sum_k exp(-0.5 * ||x - mu_k||^2)
-    """
-    if z.dim() == 1:
-        z = z.unsqueeze(0)
-    # z: (N, 10), modes: (4, 10) → diffs: (N, 4, 10)
-    diffs = z.unsqueeze(1) - _MODES_10D.unsqueeze(0)
-    log_components = -0.5 * torch.sum(diffs**2, dim=-1)  # (N, 4)
-    energy = -torch.logsumexp(log_components, dim=-1)  # (N,)
-    return energy.squeeze()
-
-
-# ────────────────────────────────────────────────────────
-# Standard Metropolis-Hastings
-# ────────────────────────────────────────────────────────
-
-
-def run_mh(
-    energy_fn,
-    dim: int,
-    n_iters: int,
-    proposal_std: float = 0.25,
-    temperature: float = 1.0,
-    x0: torch.Tensor | None = None,
-    burn_in: int = 0,
-    save_every: int = 1,
-) -> dict:
-    """Run standard MH. Returns dict of metrics + samples."""
-    x = x0.clone() if x0 is not None else torch.zeros(dim)
-    result = energy_fn(x)
-    if isinstance(result, tuple):
-        fx, _ = result
-        fx = fx.item()
-    else:
-        fx = result.item()
-
-    best_x, best_e = x.clone(), fx
-    accept_count = 0
-    energies = []
-    samples = []
-
-    for it in range(1, n_iters + 1):
-        y = x + proposal_std * torch.randn(dim)
-        result = energy_fn(y)
-        if isinstance(result, tuple):
-            fy, in_r = result
-            fy_val = fy.item()
-            if isinstance(in_r, torch.Tensor):
-                in_r = in_r.item()
-        else:
-            fy_val = result.item()
-            in_r = True
-
-        log_r = (-fy_val + fx) / temperature
-
-        if not in_r:
-            accept = False
-        elif log_r > 0:
-            accept = True
-        else:
-            accept = torch.rand(1).item() < math.exp(log_r)
-
-        if accept:
-            x = y.clone()
-            fx = fy_val
-            accept_count += 1
-        if fx < best_e:
-            best_e = fx
-            best_x = x.clone()
-        energies.append(fx)
-
-        if it > burn_in and it % save_every == 0:
-            samples.append(x.clone())
-
-    return {
-        "best_energy": best_e,
-        "best_x": best_x,
-        "acceptance_rate": accept_count / n_iters,
-        "energies": torch.tensor(energies),
-        "samples": torch.stack(samples) if samples else torch.empty(0, dim),
-    }
-
-
-# ────────────────────────────────────────────────────────
-# Parallel Tempering
-# ────────────────────────────────────────────────────────
-
-
-def run_parallel_tempering(
-    energy_fn,
-    dim: int,
-    n_iters: int,
-    n_replicas: int = 8,
-    proposal_std: float = 0.25,
-    t_min: float = 1.0,
-    t_max: float = 10.0,
-    swap_interval: int = 10,
-    burn_in: int = 0,
-    save_every: int = 1,
-) -> dict:
-    """Parallel tempering with geometric temperature ladder.
-
-    Coldest replica runs at t_min (default 1.0 for fair comparison with MH).
-    """
-    temps = torch.logspace(math.log10(t_min), math.log10(t_max), n_replicas)
-
-    # Initialize replicas
-    states = [torch.zeros(dim) for _ in range(n_replicas)]
-    energies_list: list[list[float]] = [[] for _ in range(n_replicas)]
-
-    # Compute initial energies
-    fxs = []
-    for i in range(n_replicas):
-        result = energy_fn(states[i])
-        if isinstance(result, tuple):
-            e, _ = result
-            fxs.append(e.item())
-        else:
-            fxs.append(result.item())
-
-    best_e = min(fxs)
-    best_x = states[fxs.index(best_e)].clone()
-    accept_counts = [0] * n_replicas
-    swap_count = 0
-    swap_attempts = 0
-    cold_samples = []
-
-    for it in range(1, n_iters + 1):
-        # MH step for each replica
-        for i in range(n_replicas):
-            y = states[i] + proposal_std * torch.randn(dim)
-            result = energy_fn(y)
-            if isinstance(result, tuple):
-                fy, in_r = result
-                fy_val = fy.item()
-                if isinstance(in_r, torch.Tensor):
-                    in_r = in_r.item()
-            else:
-                fy_val = result.item()
-                in_r = True
-
-            log_r = (-fy_val + fxs[i]) / temps[i].item()
-
-            if not in_r:
-                accept = False
-            elif log_r > 0:
-                accept = True
-            else:
-                accept = torch.rand(1).item() < math.exp(log_r)
-
-            if accept:
-                states[i] = y.clone()
-                fxs[i] = fy_val
-                accept_counts[i] += 1
-
-            if fxs[i] < best_e:
-                best_e = fxs[i]
-                best_x = states[i].clone()
-
-            energies_list[i].append(fxs[i])
-
-        # Replica swaps
-        if it % swap_interval == 0:
-            for i in range(n_replicas - 1):
-                swap_attempts += 1
-                delta = (1.0 / temps[i].item() - 1.0 / temps[i + 1].item()) * (fxs[i + 1] - fxs[i])
-                if delta > 0 or torch.rand(1).item() < math.exp(delta):
-                    states[i], states[i + 1] = states[i + 1], states[i]
-                    fxs[i], fxs[i + 1] = fxs[i + 1], fxs[i]
-                    swap_count += 1
-
-        # Collect sample from coldest replica (after burn-in, at save_every)
-        if it > burn_in and it % save_every == 0:
-            cold_samples.append(states[0].clone())
-
-    # Return coldest replica stats
-    return {
-        "best_energy": best_e,
-        "best_x": best_x,
-        "acceptance_rate": accept_counts[0] / n_iters,
-        "swap_rate": swap_count / max(swap_attempts, 1),
-        "energies": torch.tensor(energies_list[0]),
-        "samples": torch.stack(cold_samples) if cold_samples else torch.empty(0, dim),
-    }
-
-
-# ────────────────────────────────────────────────────────
 # ────────────────────────────────────────────────────────
 # Main benchmark
 # ────────────────────────────────────────────────────────
@@ -281,8 +58,6 @@ def benchmark_problem(
     )
 
     # --- SAMC ---
-    # SAMC save_every applies to all iterations (including burn-in) since
-    # the sampler API doesn't have a burn_in param. We slice post-hoc.
     torch.manual_seed(42)
     print(f"  Running SAMC ({n_iters:,} iters)...")
     t0 = time.perf_counter()
@@ -290,7 +65,6 @@ def benchmark_problem(
     samc_result = sampler.run(n_steps=n_iters, save_every=save_every, progress=True)
     t_samc = time.perf_counter() - t0
 
-    # Discard burn-in samples (first burn_in // save_every saved snapshots)
     burn_in_snapshots = burn_in // save_every
     samc_samples = samc_result.samples[burn_in_snapshots:]
 
@@ -355,9 +129,13 @@ def benchmark_problem(
     return results
 
 
+# ────────────────────────────────────────────────────────
+# Plotting
+# ────────────────────────────────────────────────────────
+
+
 def plot_trajectories_2d(results_2d: dict):
     """Plot 2D sample trajectories over the energy landscape contour."""
-    # Build energy landscape grid
     grid_n = 200
     xx = torch.linspace(-1.1, 1.1, grid_n)
     yy = torch.linspace(-1.1, 1.1, grid_n)
@@ -377,31 +155,19 @@ def plot_trajectories_2d(results_2d: dict):
     )
 
     for ax, method, label in zip(axes, methods, labels):
-        # Energy contour background
-        ax.contourf(
-            xx.numpy(),
-            yy.numpy(),
-            Z,
-            levels=40,
-            cmap="viridis",
-            alpha=0.6,
-        )
+        ax.contourf(xx.numpy(), yy.numpy(), Z, levels=40, cmap="viridis", alpha=0.6)
 
-        # Subsample trajectory for visibility
         samples = results_2d[method]["samples"]
         if samples.dim() == 3:
-            # Multi-chain: take first chain
             samples = samples[0]
         samples = samples.numpy()
         n = len(samples)
         step = max(1, n // 3000)
         sx, sy = samples[::step, 0], samples[::step, 1]
 
-        # Plot trajectory as line + scatter (red for contrast against viridis)
         ax.plot(sx, sy, color="red", alpha=0.08, linewidth=0.3, zorder=2)
         ax.scatter(sx, sy, c="red", s=0.5, alpha=0.35, zorder=3)
 
-        # Mark best point
         best_x = results_2d[method].get("best_x", None)
         if best_x is None and "samples" in results_2d[method]:
             best_x = results_2d[method]["samples"][0]
@@ -423,8 +189,8 @@ def plot_trajectories_2d(results_2d: dict):
         ax.set_xlim(-1.15, 1.15)
         ax.set_ylim(-1.15, 1.15)
         ax.set_title(f"{label}\n(acc={results_2d[method]['acceptance_rate']:.3f})")
-        ax.set_xlabel("x₁")
-        ax.set_ylabel("x₂")
+        ax.set_xlabel("x\u2081")
+        ax.set_ylabel("x\u2082")
         ax.legend(loc="upper right", fontsize=8)
         ax.set_aspect("equal")
 
@@ -437,11 +203,7 @@ def plot_trajectories_2d(results_2d: dict):
 def plot_comparison(results_2d: dict, results_10d: dict):
     """Generate comparison plots for both problems."""
     fig, axes = plt.subplots(2, 3, figsize=(16, 10))
-    fig.suptitle(
-        "SAMC vs MH vs Parallel Tempering",
-        fontsize=14,
-        fontweight="bold",
-    )
+    fig.suptitle("SAMC vs MH vs Parallel Tempering", fontsize=14, fontweight="bold")
 
     methods = ["samc", "mh", "pt"]
     labels = ["SAMC", "MH", "PT"]
@@ -450,14 +212,12 @@ def plot_comparison(results_2d: dict, results_10d: dict):
     for row, (title, results) in enumerate(
         [("2D Multimodal", results_2d), ("10D Gaussian Mixture", results_10d)]
     ):
-        # Best energy bar chart
         ax = axes[row, 0]
         best_es = [results[m]["best_energy"] for m in methods]
         ax.bar(labels, best_es, color=colors, alpha=0.8)
         ax.set_title(f"{title}\nBest Energy")
         ax.set_ylabel("Energy")
 
-        # Acceptance rate bar chart
         ax = axes[row, 1]
         acc_vals = [results[m]["acceptance_rate"] for m in methods]
         ax.bar(labels, acc_vals, color=colors, alpha=0.8)
@@ -465,7 +225,6 @@ def plot_comparison(results_2d: dict, results_10d: dict):
         ax.set_ylabel("Rate")
         ax.set_ylim(0, 1)
 
-        # Wall-clock time bar chart
         ax = axes[row, 2]
         time_vals = [results[m]["wall_time"] for m in methods]
         ax.bar(labels, time_vals, color=colors, alpha=0.8)
@@ -490,7 +249,6 @@ def plot_comparison(results_2d: dict, results_10d: dict):
         ax = axes2[col]
         for m, label, color in zip(methods, labels, colors):
             e = results[m]["energies"].numpy()
-            # Subsample for plotting
             step = max(1, len(e) // 5000)
             ax.plot(
                 np.arange(0, len(e), step),
@@ -510,6 +268,11 @@ def plot_comparison(results_2d: dict, results_10d: dict):
     plt.savefig("benchmarks/energy_traces.png", dpi=200, bbox_inches="tight")
     plt.close()
     print("Plot saved to benchmarks/energy_traces.png")
+
+
+# ────────────────────────────────────────────────────────
+# Summary
+# ────────────────────────────────────────────────────────
 
 
 def print_summary_table(
@@ -543,15 +306,19 @@ def print_summary_table(
             )
 
 
+# ────────────────────────────────────────────────────────
+# Main
+# ────────────────────────────────────────────────────────
+
+
 def main():
-    # Shared settings for fair comparison
     n_iters_2d = 500_000
     n_iters_10d = 200_000
-    save_every = 100  # same collection frequency for all methods
-    burn_in_frac = 0.1  # discard first 10% as burn-in
+    save_every = 100
+    burn_in_frac = 0.1
 
-    proposal_std_2d = 0.05  # same proposal for all methods on 2D problem
-    proposal_std_10d = 1.0  # same proposal for all methods on 10D problem
+    proposal_std_2d = 0.05
+    proposal_std_10d = 1.0
 
     results_2d = benchmark_problem(
         name="2D Multimodal Cost Function",

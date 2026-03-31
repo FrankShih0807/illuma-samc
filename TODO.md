@@ -199,6 +199,15 @@ For UX improvements and input validation, the same pipeline applies:
 - [x] LangevinProposal end-to-end
 - [x] Multi-chain `plot_diagnostics` (found and fixed crash)
 
+### Step 22: Codebase Restructure
+- [x] Extract energy functions into `src/illuma_samc/problems/` (multimodal_2d, gaussian_10d, registry)
+- [x] Extract baselines into `src/illuma_samc/baselines/` (metropolis_hastings, parallel_tempering)
+- [x] Slim down `benchmarks/vs_mh_pt.py` to orchestration + plotting only
+- [x] Update `train.py` to import from new modules
+- [x] Update `benchmarks/debug_10d.py` to import from new modules
+- [x] Update `__init__.py` with subpackage re-exports
+- [x] All tests pass, ruff clean, CLI commands verified
+
 ## Phase 3: Production Hardening (PARKED — do not start)
 
 > Recorded for future planning. Do not begin until Phase 2.5 is complete and Frank approves.

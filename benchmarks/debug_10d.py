@@ -6,24 +6,9 @@ import numpy as np
 import torch
 
 from illuma_samc import SAMC
+from illuma_samc.problems.gaussian_10d import gaussian_mixture_10d
 
 matplotlib.use("Agg")
-
-# 4 modes at distance 10 from origin in different directions
-_MODES_10D = torch.zeros(4, 10)
-_MODES_10D[0, 0] = 10.0
-_MODES_10D[1, 0] = -10.0
-_MODES_10D[2, 1] = 10.0
-_MODES_10D[3, 1] = -10.0
-
-
-def gaussian_mixture_10d(z: torch.Tensor) -> torch.Tensor:
-    if z.dim() == 1:
-        z = z.unsqueeze(0)
-    diffs = z.unsqueeze(1) - _MODES_10D.unsqueeze(0)
-    log_components = -0.5 * torch.sum(diffs**2, dim=-1)
-    energy = -torch.logsumexp(log_components, dim=-1)
-    return energy.squeeze()
 
 
 def run_config(name, sampler, n_steps=200_000, save_every=100):
