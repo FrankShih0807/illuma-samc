@@ -59,8 +59,18 @@ def plot_diagnostics(
     # (0,1) Energy trace
     energies = sampler.energy_history
     if isinstance(energies, torch.Tensor):
-        energies = energies.detach().cpu().numpy()
-    axes[0, 1].plot(energies, linewidth=0.3, alpha=0.7, color="darkorange")
+        e_np = energies.detach().cpu().numpy()
+        # Multi-chain: shape (n_steps, N) — plot mean across chains
+        if e_np.ndim == 2:
+            axes[0, 1].plot(e_np.mean(axis=1), linewidth=0.3, alpha=0.7, color="darkorange")
+        else:
+            axes[0, 1].plot(e_np, linewidth=0.3, alpha=0.7, color="darkorange")
+    elif isinstance(energies, list) and len(energies) > 0 and isinstance(energies[0], torch.Tensor):
+        # Multi-chain: list of (N,) tensors → stack and average
+        e_np = torch.stack(energies).mean(dim=1).numpy()
+        axes[0, 1].plot(e_np, linewidth=0.3, alpha=0.7, color="darkorange")
+    else:
+        axes[0, 1].plot(energies, linewidth=0.3, alpha=0.7, color="darkorange")
     axes[0, 1].set_xlabel("Iteration")
     axes[0, 1].set_ylabel("Energy")
     axes[0, 1].set_title("Energy Trace")
@@ -75,11 +85,21 @@ def plot_diagnostics(
     axes[1, 0].grid(alpha=0.2)
 
     # (1,1) Rolling acceptance rate
-    n = len(energies)
+    # Flatten energy history to 1-D for rolling rate computation
+    e_hist = sampler.energy_history
+    if isinstance(e_hist, torch.Tensor):
+        e_1d = e_hist.detach().cpu()
+        if e_1d.ndim == 2:
+            e_1d = e_1d.mean(dim=1)  # average across chains
+    elif isinstance(e_hist, list) and len(e_hist) > 0 and isinstance(e_hist[0], torch.Tensor):
+        # Multi-chain: list of (N,) tensors → stack and average
+        e_1d = torch.stack(e_hist).mean(dim=1)
+    else:
+        e_1d = torch.tensor(e_hist)
+    n = len(e_1d)
     if n > rolling_window:
         # Compute acceptance from energy changes (energy changed => accepted)
-        e_tensor = torch.tensor(energies)
-        changed = (e_tensor[1:] != e_tensor[:-1]).float()
+        changed = (e_1d[1:] != e_1d[:-1]).float()
         # Pad with zeros at start
         padded = torch.cat([torch.zeros(rolling_window - 1), changed])
         kernel = torch.ones(rolling_window) / rolling_window

@@ -631,3 +631,107 @@ class TestGPU:
 
         assert torch.allclose(cpu_result.samples, gpu_result.samples.cpu(), atol=1e-5)
         assert abs(cpu_result.best_energy - gpu_result.best_energy) < 1e-5
+
+
+class TestAdditionalCoverage:
+    """Step 21: Additional test coverage for existing behavior."""
+
+    def test_energy_fn_returning_tuple(self):
+        """Verify sampler handles energy functions returning (energy, in_region) tuples."""
+
+        def cost_with_region(x: torch.Tensor) -> tuple[torch.Tensor, bool]:
+            energy = 0.5 * torch.sum(x**2)
+            in_region = torch.all(torch.abs(x) < 2.0).item()
+            return energy, in_region
+
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=cost_with_region,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        result = sampler.run(n_steps=500, progress=False)
+        assert result.samples.shape[1] == 2
+        assert result.acceptance_rate > 0
+
+    def test_very_short_run_no_crash(self):
+        """Very short run (n_steps < save_every) should return empty samples, no crash."""
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+        )
+        result = sampler.run(n_steps=5, save_every=100, progress=False)
+        assert result.samples.shape == (0, 2)
+        assert result.sample_log_weights.shape == (0,)
+        assert result.energy_history.shape == (5,)
+
+    def test_save_every_one(self):
+        """save_every=1 should save all samples."""
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+        )
+        n_steps = 50
+        result = sampler.run(n_steps=n_steps, save_every=1, progress=False)
+        assert result.samples.shape[0] == n_steps
+
+    def test_langevin_proposal_end_to_end(self):
+        """End-to-end test with LangevinProposal (gradient-informed)."""
+        from illuma_samc.proposals import LangevinProposal
+
+        def smooth_energy(x: torch.Tensor) -> torch.Tensor:
+            return 0.5 * torch.sum(x**2)
+
+        torch.manual_seed(42)
+        langevin = LangevinProposal(energy_fn=smooth_energy, step_size=0.1)
+        sampler = SAMC(
+            energy_fn=smooth_energy,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            proposal_fn=langevin,
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        result = sampler.run(n_steps=500, progress=False)
+        assert result.acceptance_rate > 0
+        assert result.best_energy < 5.0
+
+    def test_multi_chain_plot_diagnostics(self):
+        """plot_diagnostics should not crash after a multi-chain run."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_partitions=5,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        x0 = torch.randn(3, 2)
+        sampler.run(n_steps=2000, x0=x0, progress=False)
+        fig = sampler.plot_diagnostics()
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
