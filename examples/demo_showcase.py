@@ -221,14 +221,17 @@ def main():
     ax.set_xlim(-7, 7)
     ax.set_ylim(-7, 7)
 
-    # (4) Weight convergence over time
+    # (4) Weight convergence — centered theta (subtract mean, like reference code)
     ax = axes[1, 0]
     theta = result.log_weights.numpy()
-    # Show weight trajectory from energy_history approach: use final weights
-    ax.bar(range(len(theta)), theta - theta.min(), color="steelblue", alpha=0.8, edgecolor="none")
-    ax.set_title("SAMC Log Weights ($\\theta$)", fontsize=13, fontweight="bold")
+    theta_centered = theta - theta.mean()
+    ax.bar(
+        range(len(theta_centered)), theta_centered, color="steelblue", alpha=0.8, edgecolor="none"
+    )
+    ax.axhline(0, color="black", linewidth=0.5, alpha=0.5)
+    ax.set_title("SAMC Log Weights ($\\theta$ centered)", fontsize=13, fontweight="bold")
     ax.set_xlabel("Energy bin")
-    ax.set_ylabel("$\\theta_k - \\theta_{\\min}$")
+    ax.set_ylabel("$\\theta_k - \\bar{\\theta}$")
     ax.grid(alpha=0.2)
 
     # (5) Bin visit histogram

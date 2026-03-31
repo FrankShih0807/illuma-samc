@@ -81,6 +81,8 @@ def run_mh(
     proposal_std: float = 0.25,
     temperature: float = 1.0,
     x0: torch.Tensor | None = None,
+    burn_in: int = 0,
+    save_every: int = 1,
 ) -> dict:
     """Run standard MH. Returns dict of metrics + samples."""
     x = x0.clone() if x0 is not None else torch.zeros(dim)
@@ -94,9 +96,9 @@ def run_mh(
     best_x, best_e = x.clone(), fx
     accept_count = 0
     energies = []
-    samples = [x.clone()]
+    samples = []
 
-    for _ in range(1, n_iters + 1):
+    for it in range(1, n_iters + 1):
         y = x + proposal_std * torch.randn(dim)
         result = energy_fn(y)
         if isinstance(result, tuple):
@@ -125,14 +127,16 @@ def run_mh(
             best_e = fx
             best_x = x.clone()
         energies.append(fx)
-        samples.append(x.clone())
+
+        if it > burn_in and it % save_every == 0:
+            samples.append(x.clone())
 
     return {
         "best_energy": best_e,
         "best_x": best_x,
         "acceptance_rate": accept_count / n_iters,
         "energies": torch.tensor(energies),
-        "samples": torch.stack(samples),
+        "samples": torch.stack(samples) if samples else torch.empty(0, dim),
     }
 
 
@@ -147,11 +151,16 @@ def run_parallel_tempering(
     n_iters: int,
     n_replicas: int = 8,
     proposal_std: float = 0.25,
-    t_min: float = 0.1,
+    t_min: float = 1.0,
     t_max: float = 10.0,
     swap_interval: int = 10,
+    burn_in: int = 0,
+    save_every: int = 1,
 ) -> dict:
-    """Parallel tempering with geometric temperature ladder."""
+    """Parallel tempering with geometric temperature ladder.
+
+    Coldest replica runs at t_min (default 1.0 for fair comparison with MH).
+    """
     temps = torch.logspace(math.log10(t_min), math.log10(t_max), n_replicas)
 
     # Initialize replicas
@@ -173,7 +182,7 @@ def run_parallel_tempering(
     accept_counts = [0] * n_replicas
     swap_count = 0
     swap_attempts = 0
-    cold_samples = [states[0].clone()]
+    cold_samples = []
 
     for it in range(1, n_iters + 1):
         # MH step for each replica
@@ -209,8 +218,6 @@ def run_parallel_tempering(
 
             energies_list[i].append(fxs[i])
 
-        cold_samples.append(states[0].clone())
-
         # Replica swaps
         if it % swap_interval == 0:
             for i in range(n_replicas - 1):
@@ -221,6 +228,10 @@ def run_parallel_tempering(
                     fxs[i], fxs[i + 1] = fxs[i + 1], fxs[i]
                     swap_count += 1
 
+        # Collect sample from coldest replica (after burn-in, at save_every)
+        if it > burn_in and it % save_every == 0:
+            cold_samples.append(states[0].clone())
+
     # Return coldest replica stats
     return {
         "best_energy": best_e,
@@ -228,7 +239,7 @@ def run_parallel_tempering(
         "acceptance_rate": accept_counts[0] / n_iters,
         "swap_rate": swap_count / max(swap_attempts, 1),
         "energies": torch.tensor(energies_list[0]),
-        "samples": torch.stack(cold_samples),
+        "samples": torch.stack(cold_samples) if cold_samples else torch.empty(0, dim),
     }
 
 
@@ -274,21 +285,45 @@ def benchmark_problem(
     samc_kwargs: dict,
     mh_kwargs: dict,
     pt_kwargs: dict,
+    burn_in_frac: float = 0.1,
+    save_every: int = 100,
 ) -> dict:
-    """Run all three methods and collect metrics."""
+    """Run all three methods with identical burn-in and sample collection.
+
+    All methods use the same:
+    - Total iterations (n_iters)
+    - Burn-in period (burn_in_frac * n_iters, discarded from samples)
+    - Sample collection frequency (save_every)
+    - Proposal step size (via kwargs)
+    """
+    burn_in = int(n_iters * burn_in_frac)
+    n_samples = (n_iters - burn_in) // save_every
+
     results = {}
     print(f"\n{'=' * 60}")
     print(f"  {name}")
     print(f"{'=' * 60}")
+    print(
+        f"  Settings: {n_iters:,} iters, burn-in={burn_in:,}, "
+        f"save_every={save_every}, n_samples={n_samples:,}"
+    )
 
     # --- SAMC ---
+    # SAMC save_every applies to all iterations (including burn-in) since
+    # the sampler API doesn't have a burn_in param. We slice post-hoc.
     torch.manual_seed(42)
     print(f"  Running SAMC ({n_iters:,} iters)...")
     t0 = time.perf_counter()
     sampler = SAMC(energy_fn=energy_fn, dim=dim, **samc_kwargs)
-    samc_result = sampler.run(n_steps=n_iters, save_every=100, progress=True)
+    samc_result = sampler.run(n_steps=n_iters, save_every=save_every, progress=True)
     t_samc = time.perf_counter() - t0
-    samc_ess = compute_ess(samc_result.energy_history.flatten())
+
+    # Discard burn-in samples (first burn_in // save_every saved snapshots)
+    burn_in_snapshots = burn_in // save_every
+    samc_samples = samc_result.samples[burn_in_snapshots:]
+
+    samc_energies_post = samc_result.energy_history.flatten()[burn_in:]
+    samc_ess = compute_ess(samc_energies_post)
     results["samc"] = {
         "best_energy": samc_result.best_energy,
         "best_x": samc_result.best_x,
@@ -296,21 +331,23 @@ def benchmark_problem(
         "ess": samc_ess,
         "wall_time": t_samc,
         "energies": samc_result.energy_history.flatten(),
-        "samples": samc_result.samples,
+        "samples": samc_samples,
     }
     print(
         f"    best_E={samc_result.best_energy:.4f}  "
         f"acc={samc_result.acceptance_rate:.3f}  "
-        f"ESS={samc_ess:.0f}  time={t_samc:.1f}s"
+        f"ESS={samc_ess:.0f}  "
+        f"n_samples={len(samc_samples)}  time={t_samc:.1f}s"
     )
 
     # --- MH ---
     torch.manual_seed(42)
     print(f"  Running MH ({n_iters:,} iters)...")
     t0 = time.perf_counter()
-    mh_result = run_mh(energy_fn, dim, n_iters, **mh_kwargs)
+    mh_result = run_mh(energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **mh_kwargs)
     t_mh = time.perf_counter() - t0
-    mh_ess = compute_ess(mh_result["energies"])
+    mh_energies_post = mh_result["energies"][burn_in:]
+    mh_ess = compute_ess(mh_energies_post)
     results["mh"] = {
         "best_energy": mh_result["best_energy"],
         "best_x": mh_result["best_x"],
@@ -323,16 +360,20 @@ def benchmark_problem(
     print(
         f"    best_E={mh_result['best_energy']:.4f}  "
         f"acc={mh_result['acceptance_rate']:.3f}  "
-        f"ESS={mh_ess:.0f}  time={t_mh:.1f}s"
+        f"ESS={mh_ess:.0f}  "
+        f"n_samples={len(mh_result['samples'])}  time={t_mh:.1f}s"
     )
 
     # --- Parallel Tempering ---
     torch.manual_seed(42)
     print(f"  Running PT ({n_iters:,} iters, {pt_kwargs.get('n_replicas', 8)} replicas)...")
     t0 = time.perf_counter()
-    pt_result = run_parallel_tempering(energy_fn, dim, n_iters, **pt_kwargs)
+    pt_result = run_parallel_tempering(
+        energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **pt_kwargs
+    )
     t_pt = time.perf_counter() - t0
-    pt_ess = compute_ess(pt_result["energies"])
+    pt_energies_post = pt_result["energies"][burn_in:]
+    pt_ess = compute_ess(pt_energies_post)
     results["pt"] = {
         "best_energy": pt_result["best_energy"],
         "best_x": pt_result["best_x"],
@@ -347,7 +388,8 @@ def benchmark_problem(
         f"    best_E={pt_result['best_energy']:.4f}  "
         f"acc={pt_result['acceptance_rate']:.3f}  "
         f"swap={pt_result['swap_rate']:.3f}  "
-        f"ESS={pt_ess:.0f}  time={t_pt:.1f}s"
+        f"ESS={pt_ess:.0f}  "
+        f"n_samples={len(pt_result['samples'])}  time={t_pt:.1f}s"
     )
 
     return results
@@ -366,7 +408,6 @@ def plot_trajectories_2d(results_2d: dict):
 
     methods = ["samc", "mh", "pt"]
     labels = ["SAMC", "MH", "Parallel Tempering"]
-    colors = ["#2196F3", "#FF9800", "#4CAF50"]
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
     fig.suptitle(
@@ -375,7 +416,7 @@ def plot_trajectories_2d(results_2d: dict):
         fontweight="bold",
     )
 
-    for ax, method, label, color in zip(axes, methods, labels, colors):
+    for ax, method, label in zip(axes, methods, labels):
         # Energy contour background
         ax.contourf(
             xx.numpy(),
@@ -539,19 +580,27 @@ def print_summary_table(results_2d: dict, results_10d: dict):
 
 
 def main():
+    # Shared settings for fair comparison
     n_iters_2d = 500_000
     n_iters_10d = 200_000
+    save_every = 100  # same collection frequency for all methods
+    burn_in_frac = 0.1  # discard first 10% as burn-in
+
+    proposal_std_2d = 0.25  # same proposal for all methods on 2D problem
+    proposal_std_10d = 1.0  # same proposal for all methods on 10D problem
 
     results_2d = benchmark_problem(
         name="2D Multimodal Cost Function",
         energy_fn=cost_2d,
         dim=2,
         n_iters=n_iters_2d,
+        burn_in_frac=burn_in_frac,
+        save_every=save_every,
         samc_kwargs={
             "n_partitions": 42,
             "e_min": -8.2,
             "e_max": 0.0,
-            "proposal_std": 0.25,
+            "proposal_std": proposal_std_2d,
             "gain": "ramp",
             "gain_kwargs": {
                 "rho": 1.0,
@@ -560,11 +609,11 @@ def main():
                 "step_scale": 1000,
             },
         },
-        mh_kwargs={"proposal_std": 0.25, "temperature": 1.0},
+        mh_kwargs={"proposal_std": proposal_std_2d, "temperature": 1.0},
         pt_kwargs={
             "n_replicas": 8,
-            "proposal_std": 0.25,
-            "t_min": 0.1,
+            "proposal_std": proposal_std_2d,
+            "t_min": 1.0,
             "t_max": 10.0,
             "swap_interval": 10,
         },
@@ -575,11 +624,13 @@ def main():
         energy_fn=gaussian_mixture_10d,
         dim=10,
         n_iters=n_iters_10d,
+        burn_in_frac=burn_in_frac,
+        save_every=save_every,
         samc_kwargs={
             "n_partitions": 30,
             "e_min": -5.0,
             "e_max": 30.0,
-            "proposal_std": 1.0,
+            "proposal_std": proposal_std_10d,
             "gain": "ramp",
             "gain_kwargs": {
                 "rho": 1.0,
@@ -588,11 +639,11 @@ def main():
                 "step_scale": 1000,
             },
         },
-        mh_kwargs={"proposal_std": 1.0, "temperature": 1.0},
+        mh_kwargs={"proposal_std": proposal_std_10d, "temperature": 1.0},
         pt_kwargs={
             "n_replicas": 8,
-            "proposal_std": 1.0,
-            "t_min": 0.5,
+            "proposal_std": proposal_std_10d,
+            "t_min": 1.0,
             "t_max": 20.0,
             "swap_interval": 10,
         },

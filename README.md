@@ -110,19 +110,19 @@ The trajectory comparison below shows how each sampler explores the 2D multimoda
 
 ### Quantitative Results
 
-SAMC vs Metropolis-Hastings vs Parallel Tempering on two problems:
+SAMC vs Metropolis-Hastings vs Parallel Tempering on two problems. All methods use identical proposal, burn-in (10%), and sample collection frequency (every 100th iteration) for fair comparison.
 
 | Problem | Method | Best Energy | ESS | Acc. Rate | Time (s) |
 |---------|--------|-------------|-----|-----------|----------|
-| 2D Multimodal | SAMC | -8.124 | 2585 | 0.213 | 24.4 |
-| 2D Multimodal | MH | -8.124 | 1250 | 0.154 | 20.6 |
-| 2D Multimodal | PT | -8.125 | 19004 | 0.069 | 170.9 |
-| 10D Gaussian | SAMC | 0.401 | 360 | 0.330 | 4.9 |
-| 10D Gaussian | MH | 0.385 | 4177 | 0.145 | 3.4 |
-| 10D Gaussian | PT | 0.580 | 10111 | 0.206 | 28.2 |
+| 2D Multimodal | SAMC | -8.124 | 2399 | 0.213 | 24.7 |
+| 2D Multimodal | MH | -8.124 | 1128 | 0.154 | 20.7 |
+| 2D Multimodal | PT (8 replicas) | -8.124 | 47326 | 0.467 | 173.8 |
+| 10D Gaussian | SAMC | 0.401 | 293 | 0.330 | 5.1 |
+| 10D Gaussian | MH | 0.385 | 3834 | 0.145 | 3.4 |
+| 10D Gaussian | PT (8 replicas) | 0.804 | 9417 | 0.265 | 29.1 |
 
 **Key takeaways:**
-- **2D multimodal:** All methods find the global minimum (~-8.12). SAMC achieves 2x the ESS of MH at similar cost. PT has highest ESS but 7x the wall-clock time.
+- **2D multimodal:** All methods find the global minimum (~-8.12). SAMC achieves 2x the ESS of MH at similar cost. PT has highest ESS but 7x the wall-clock time (8 replicas).
 - **10D Gaussian mixture:** SAMC has the highest acceptance rate (0.33) and competitive best energy at minimal cost. PT is 6x slower.
 
 Run benchmarks yourself:

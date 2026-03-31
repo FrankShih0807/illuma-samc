@@ -46,12 +46,14 @@ def plot_diagnostics(
 
     fig, axes = plt.subplots(2, 2, figsize=figsize)
 
-    # (0,0) Weight trajectory (theta)
-    theta = sampler.log_weights.detach().cpu().numpy()
+    # (0,0) Weight trajectory (theta), centered by subtracting mean
+    theta_raw = sampler.log_weights.detach().cpu()
+    theta = (theta_raw - theta_raw.mean()).numpy()
     axes[0, 0].bar(range(len(theta)), theta, color="steelblue", alpha=0.8)
+    axes[0, 0].axhline(0, color="black", linewidth=0.5, alpha=0.5)
     axes[0, 0].set_xlabel("Bin index")
-    axes[0, 0].set_ylabel("Log weight (θ)")
-    axes[0, 0].set_title("SAMC Log Weights")
+    axes[0, 0].set_ylabel("Log weight (θ − mean)")
+    axes[0, 0].set_title("SAMC Log Weights (centered)")
     axes[0, 0].grid(alpha=0.2)
 
     # (0,1) Energy trace
