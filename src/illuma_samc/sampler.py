@@ -328,7 +328,7 @@ class SAMC:
             if it % save_every == 0:
                 cur_bin = self._partition.assign(fx)
                 samples.append(x.clone())
-                sample_bins.append(max(cur_bin, 0))
+                sample_bins.append(cur_bin)  # keep -1 for out-of-range
 
         self.log_weights = theta
         self.energy_history = energy_history
@@ -344,11 +344,18 @@ class SAMC:
         # Per-sample importance log-weights: -theta[bin] reweights from flat to target
         # Only include samples from bins with positive visit counts (unvisited bins
         # have meaningless theta values from accumulated uniform subtraction).
+        # Out-of-range samples (bin == -1) always get -inf.
         if sample_bins:
             bin_idx = torch.tensor(sample_bins, dtype=torch.long)
-            visited_mask = counts[bin_idx] > 0
+            in_range = bin_idx >= 0
             sample_log_w = torch.full((len(sample_bins),), float("-inf"), device=device)
-            sample_log_w[visited_mask] = -theta[bin_idx[visited_mask]].float().to(device)
+            if in_range.any():
+                valid_bins = bin_idx[in_range]
+                visited_mask = counts[valid_bins] > 0
+                # Create a sub-mask for in-range samples that were also visited
+                in_range_indices = in_range.nonzero(as_tuple=True)[0]
+                visited_indices = in_range_indices[visited_mask]
+                sample_log_w[visited_indices] = -theta[bin_idx[visited_indices]].float().to(device)
         else:
             sample_log_w = torch.empty(0, device=device)
 
@@ -470,7 +477,7 @@ class SAMC:
             if it % save_every == 0:
                 samples.append(x.clone())  # (N, dim)
                 sample_bins_per_step.append(
-                    [max(self._partition.assign(fx[c]), 0) for c in range(n_chains)]
+                    [self._partition.assign(fx[c]) for c in range(n_chains)]
                 )
 
         acc_rate = accept_count / total_decisions if total_decisions > 0 else 0.0
@@ -491,12 +498,23 @@ class SAMC:
 
         # Per-sample importance log-weights: -theta[bin] → (N, n_saved)
         # Only include samples from bins with positive visit counts.
+        # Out-of-range samples (bin == -1) always get -inf.
         if sample_bins_per_step:
             # (n_saved, N)
             bin_idx = torch.tensor(sample_bins_per_step, dtype=torch.long)
-            visited_mask = counts[bin_idx] > 0  # (n_saved, N)
-            sample_log_w = torch.full_like(bin_idx, float("-inf"), dtype=torch.float32, device=device)
-            sample_log_w[visited_mask] = -theta[bin_idx[visited_mask]].float().to(device)
+            in_range = bin_idx >= 0
+            sample_log_w = torch.full_like(
+                bin_idx, float("-inf"), dtype=torch.float32, device=device
+            )
+            if in_range.any():
+                valid_bins = bin_idx[in_range]
+                visited_mask = counts[valid_bins] > 0
+                # Indices of in-range entries that also have positive counts
+                in_range_flat = in_range.nonzero(as_tuple=False)
+                visited_flat = in_range_flat[visited_mask]
+                for idx in visited_flat:
+                    r, c = idx[0].item(), idx[1].item()
+                    sample_log_w[r, c] = -theta[bin_idx[r, c]].float().to(device)
             sample_log_w = sample_log_w.permute(1, 0)  # (N, n_saved)
         else:
             sample_log_w = torch.empty(n_chains, 0, device=device)

@@ -8,6 +8,51 @@ from illuma_samc.proposals import GaussianProposal
 from illuma_samc.sampler import SAMC, SAMCResult
 
 
+class TestBugFixes:
+    def test_out_of_range_sample_bin_not_zero(self):
+        """Bug A: Out-of-range samples saved at save_every should get log-weight=-inf.
+
+        The bug: sampler.py uses max(cur_bin, 0), mapping out-of-range samples
+        to bin 0. In multi-chain mode, if chain A is in-range (populating bin 0)
+        while chain B is stuck out-of-range, chain B's samples incorrectly get
+        bin 0's finite importance weight.
+        """
+
+        def quadratic_batch(x: torch.Tensor) -> torch.Tensor:
+            if x.dim() == 1:
+                return 0.5 * torch.sum(x**2)
+            return 0.5 * torch.sum(x**2, dim=-1)
+
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=quadratic_batch,
+            dim=2,
+            n_partitions=5,
+            e_min=0.0,
+            e_max=2.0,
+            proposal_std=0.1,  # small steps so chains stay near start
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        # Chain 0: starts in-range (energy=0.5), chain 1: starts out of range (energy=50)
+        x0 = torch.tensor([[1.0, 0.0], [10.0, 0.0]])
+        result = sampler.run(n_steps=200, x0=x0, save_every=1, progress=False)
+
+        # result.samples shape: (2, 200, 2), sample_log_weights shape: (2, 200)
+        # Chain 1 is stuck out of range — all its samples should have -inf weight
+        partition = UniformPartition(e_min=0.0, e_max=2.0, n_bins=5)
+        n_oor_finite = 0
+        for i in range(result.samples.shape[1]):
+            for c in range(result.samples.shape[0]):
+                e = quadratic_batch(result.samples[c, i])
+                if partition.assign(e) < 0:
+                    if result.sample_log_weights[c, i].item() != float("-inf"):
+                        n_oor_finite += 1
+        assert n_oor_finite == 0, (
+            f"{n_oor_finite} out-of-range samples have finite log-weights (should be -inf)"
+        )
+
+
 def _quadratic_energy(x: torch.Tensor) -> torch.Tensor:
     """Simple quadratic energy: E(x) = 0.5 * ||x||^2."""
     return 0.5 * torch.sum(x**2)
