@@ -213,16 +213,16 @@ For UX improvements and input validation, the same pipeline applies:
 > Progressive difficulty: learn tuning intuitions on cheap models, apply to harder ones.
 
 ### Step 23: Infrastructure Prep (3A)
-- [ ] Add Rosenbrock 2D problem (`src/illuma_samc/problems/rosenbrock_2d.py`) — narrow curved valley, global min at (1,1) with E=0
-- [ ] Add Rastrigin 20D problem (`src/illuma_samc/problems/rastrigin_20d.py`) — ~10^20 local minima, global min at origin with E=0
-- [ ] Register new problems in `problems/__init__.py` and `train.py` MODELS dict
-- [ ] Add default configs for `rosenbrock` and `rastrigin` models in `configs/samc.yaml`, `mh.yaml`, `pt.yaml`
-- [ ] Add mode coverage metric: count distinct modes visited per problem (post-hoc analysis)
-- [ ] Add bin visit flatness metric: `1 - std(bin_counts) / mean(bin_counts)`, standardize in results.json
-- [ ] Create `ablation/sweep.py` — reads YAML sweep spec, generates `train.py` commands, supports `--dry-run` and `--parallel N`
-- [ ] Create `ablation/analyze.py` — loads results from a group dir, computes derived metrics, generates plots + CSV
-- [ ] Add `--partition_type {uniform,adaptive,quantile}`, `--n_chains`, `--gain_t0` args to `train.py`
-- [ ] Verify infra with a quick smoke test: 3 algos x 2 models x 1 seed
+- [x] Add Rosenbrock 2D problem (`src/illuma_samc/problems/rosenbrock_2d.py`) — narrow curved valley, global min at (1,1) with E=0
+- [x] Add Rastrigin 20D problem (`src/illuma_samc/problems/rastrigin_20d.py`) — ~10^20 local minima, global min at origin with E=0
+- [x] Register new problems in `problems/__init__.py` and `train.py` MODELS dict
+- [x] Add default configs for `rosenbrock` and `rastrigin` models in `configs/samc.yaml`, `mh.yaml`, `pt.yaml`
+- [x] Add mode coverage metric: count distinct modes visited per problem (post-hoc analysis)
+- [x] Add bin visit flatness metric: `1 - std(bin_counts) / mean(bin_counts)`, standardize in results.json
+- [x] Create `ablation/sweep.py` — reads YAML sweep spec, generates `train.py` commands, supports `--dry-run` and `--parallel N`
+- [x] Create `ablation/analyze.py` — loads results from a group dir, computes derived metrics, generates plots + CSV
+- [x] Add `--partition_type {uniform,adaptive,quantile}`, `--n_chains`, `--gain_t0` args to `train.py`
+- [x] Verify infra with a quick smoke test: 3 algos x 2 models x 1 seed
 
 ### Step 24: 2D Multimodal Ablations (3B) — cheapest, full sweeps
 > Run ALL ablation groups on 2D only. Each group varies ONE factor, 3 seeds each.

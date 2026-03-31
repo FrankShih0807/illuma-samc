@@ -1,5 +1,17 @@
 # illuma-samc Work Log
 
+## [2026-03-31] Step 23: Infrastructure Prep (Phase 3A)
+- **Phase:** prototyping
+- **Status:** done
+- **Summary:**
+  - Added Rosenbrock 2D (narrow valley, min at (1,1)) and Rastrigin 20D (~10^20 local minima, min at origin) problems
+  - Created `analysis.py` with mode coverage (per-problem) and bin flatness metrics; integrated flatness into train.py results
+  - Built `ablation/sweep.py` (YAML spec -> train.py commands, --dry-run, --parallel N) and `ablation/analyze.py` (load results, stats, plots, CSV)
+  - Added --partition_type, --n_chains, --gain_t0 CLI args to train.py with full wiring
+  - Smoke-tested all 6 combos (3 algos x 2 models) successfully
+- **Decisions made:** QuantilePartition in CLI uses random warmup samples since it needs energy data upfront. Kept mode coverage simple (threshold-based distance to known modes).
+- **Affects:** None — all new code, no breaking changes.
+
 ## [2026-03-31] Repo Organization Cleanup
 - **Phase:** maintenance
 - **Status:** done
