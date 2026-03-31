@@ -102,6 +102,14 @@ python examples/multimodal_2d.py      # Reproduce Liang's 2D experiment
 
 ## Benchmarks
 
+### Sample Trajectories
+
+The trajectory comparison below shows how each sampler explores the 2D multimodal energy landscape. SAMC covers the entire domain uniformly — MH gets trapped in local basins.
+
+![Trajectory comparison](benchmarks/trajectory_comparison.png)
+
+### Quantitative Results
+
 SAMC vs Metropolis-Hastings vs Parallel Tempering on two problems:
 
 | Problem | Method | Best Energy | ESS | Acc. Rate | Time (s) |
