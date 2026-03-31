@@ -3,21 +3,39 @@
 > **Problem**: 2D multimodal cost function with global minimum at E = -8.1246
 > **Setup**: 500K iterations, 3 seeds (42, 123, 456) per configuration, 171 total runs
 > **Algorithms**: SAMC, Metropolis-Hastings (MH), Parallel Tempering (PT)
-> **Metrics**: Best energy found, acceptance rate, bin visit flatness (SAMC only)
+> **Metrics**: Best energy, bin visit flatness, round-trip time, energy autocorrelation, sample traces
 > **Date**: 2026-03-31
 
 ---
 
 ## Executive Summary
 
-On the 2D multimodal benchmark, **SAMC is highly robust** -- nearly all configurations find the global minimum (E = -8.1246). The 2D problem is "easy" in the sense that the global optimum is reliably found, but the ablations reveal important differences in **exploration quality** (bin flatness) and **acceptance rate** that will matter for harder problems.
+On the 2D multimodal benchmark, **all three algorithms find the global minimum** (E = -8.1246). But best energy alone is insufficient — SAMC's purpose is flat-histogram exploration with rapid energy-space mixing. When evaluated on **flat density** and **mixing speed**, significant differences emerge.
 
 **Key findings**:
-1. **SAMC proposal_std** is the highest-impact parameter -- too small (0.01) causes SAMC to fail completely
-2. **Energy range** (e_max) is critical -- wrong range = dead sampler
-3. **Partition type** matters: uniform >> adaptive/quantile for this problem
-4. **Gain schedule** barely matters for energy found, but `log` has poor flatness
-5. MH and PT both find the global min reliably but lack SAMC's flat exploration guarantee
+1. **`proposal_std=0.1` mixes 2x faster** than default 0.05 — invisible without mixing metrics
+2. **`log` gain schedule fails to mix** despite finding the optimum (zero round-trips)
+3. **Energy range** (e_max) is the #1 failure mode — wrong range = dead sampler
+4. **MH at low temperature gets stuck** — SAMC's weight correction solves this automatically
+5. **SAMC temperature has minimal effect** — the weight correction already handles exploration
+
+## SAMC vs MH: The Core Difference
+
+![Energy Trace](figures/energy_trace_samc_vs_mh.png)
+
+SAMC rapidly traverses the full energy range (blue, left). MH at the same temperature stays in local energy regions (red, right). This is the fundamental advantage of flat-histogram sampling.
+
+## Algorithm Comparison in Domain Space
+
+![Sample Traces](figures/sample_traces_algo_comparison.png)
+
+All three algorithms (SAMC, MH, PT) cover the 2D domain, but with different patterns. SAMC spreads uniformly due to weight correction. MH concentrates in low-energy basins. PT covers broadly via temperature exchange.
+
+## SAMC Bin Histogram Convergence
+
+![Bin Convergence](figures/bin_histogram_convergence.png)
+
+SAMC achieves near-flat bin visits by 50K iterations (flatness=0.97), maintaining it through 500K. The red dashed line shows the ideal uniform count.
 
 ---
 
@@ -46,7 +64,7 @@ Parameters ranked by impact on best energy found (most sensitive first):
 
 ### 2.1 SAMC Gain Schedule
 
-![Gain Schedule](../figures/samc_gain_schedule.png)
+![Gain Schedule Energy Traces](figures/gain_schedule_energy_traces.png)
 
 | Schedule | Best Energy (mean +/- std) | Acceptance Rate | Bin Flatness |
 |----------|---------------------------|-----------------|--------------|
@@ -108,7 +126,7 @@ Parameters ranked by impact on best energy found (most sensitive first):
 
 ### 2.5 SAMC Proposal Standard Deviation
 
-![Proposal Std](../figures/samc_proposal_std.png)
+![Proposal Std Energy Traces](figures/proposal_std_energy_traces.png)
 
 | proposal_std | Best Energy (mean +/- std) | Acceptance Rate | Bin Flatness |
 |--------------|---------------------------|-----------------|--------------|
@@ -272,6 +290,12 @@ Parameters ranked by impact on best energy found (most sensitive first):
 
 ## 5. SAMC vs MH vs PT Comparison
 
+### MH Temperature Sensitivity — Visual Evidence
+
+![MH Temperature](figures/mh_temperature_traces.png)
+
+MH at T=0.1 is completely stuck (flat energy trace, concentrated samples). At T=5.0 it explores broadly but diffusely. SAMC achieves the right balance automatically.
+
 ### Where SAMC Wins
 - **Exploration guarantee**: SAMC achieves flat bin visits (flatness >0.9), meaning it samples all energy regions equally. MH and PT have no such guarantee.
 - **Robustness to local minima**: SAMC with proper energy range finds the global minimum regardless of initialization. MH at low temperature gets trapped.
@@ -346,9 +370,13 @@ On this easy 2D problem, **all three algorithms find the global minimum reliably
 
 **Sharp phase transition at t0=1000**: below this, SAMC degrades to MH (no mixing). Set `t0 ≥ max(1000, n_iters/500)`.
 
-### SAMC Temperature
+### SAMC Temperature — Sample Traces & Energy Traces
 
-![Temperature](figures/mixing_temperature.png)
+![SAMC Temperature Traces](figures/samc_temperature_traces.png)
+
+Temperature barely changes SAMC's behavior on 2D — the weight correction dominates. All temperatures achieve broad domain coverage and rapid energy traversal.
+
+![Temperature Mixing](figures/mixing_temperature.png)
 
 | T | Flatness | Round-Trip | # Trips |
 |---|----------|-----------|---------|
