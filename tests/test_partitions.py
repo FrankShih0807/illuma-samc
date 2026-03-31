@@ -61,6 +61,20 @@ class TestAdaptivePartition:
         # Not enough samples yet — edges unchanged
         assert torch.allclose(p.edges, original_edges)
 
+    def test_adaptive_partition_ignores_outliers(self):
+        """Bug D: Out-of-range energies should not influence adapted bin edges."""
+        p = AdaptivePartition(e_min=0.0, e_max=10.0, n_bins=5, adapt_interval=200, min_samples=100)
+        # Feed 199 in-range values
+        for _ in range(199):
+            p.assign(torch.tensor(5.0))
+        # Feed 1 extreme outlier (triggers adaptation at call 200)
+        p.assign(torch.tensor(1000.0))
+
+        # Edges should NOT expand to cover the outlier
+        assert p.edges[-1].item() <= 10.1, (
+            f"Edges expanded to {p.edges[-1].item()} due to outlier — should stay near 10.0"
+        )
+
     def test_adaptive_partition_memory_bounded(self):
         """Bug C: History should be bounded regardless of iteration count."""
         p = AdaptivePartition(e_min=0.0, e_max=10.0, n_bins=5, adapt_interval=1000, min_samples=100)

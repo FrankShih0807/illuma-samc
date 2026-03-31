@@ -95,11 +95,13 @@ class AdaptivePartition(Partition):
 
     def assign(self, energy: torch.Tensor) -> int:
         e = energy.item() if isinstance(energy, torch.Tensor) else float(energy)
-        self._history.append(e)
+        b = self._bin_for(e)
+        if b >= 0:
+            self._history.append(e)
         self._call_count += 1
         if self._call_count % self._adapt_interval == 0 and len(self._history) >= self._min_samples:
             self._adapt()
-        return self._bin_for(e)
+        return b
 
     def _bin_for(self, e: float) -> int:
         if e < self._edges[0].item() or e > self._edges[-1].item():
