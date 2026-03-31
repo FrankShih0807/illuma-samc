@@ -52,6 +52,22 @@ class TestBugFixes:
             f"{n_oor_finite} out-of-range samples have finite log-weights (should be -inf)"
         )
 
+    def test_importance_weights_all_inf(self):
+        """Bug B: importance_weights should return zeros (not NaN) when all log-weights are -inf."""
+        result = SAMCResult(
+            samples=torch.randn(5, 2),
+            log_weights=torch.zeros(3),
+            sample_log_weights=torch.full((5,), float("-inf")),
+            energy_history=torch.randn(100),
+            bin_counts=torch.zeros(3),
+            acceptance_rate=0.0,
+            best_x=torch.zeros(2),
+            best_energy=0.0,
+        )
+        w = result.importance_weights
+        assert not torch.isnan(w).any(), "importance_weights should not contain NaN"
+        assert (w == 0.0).all(), "All weights should be zero when all log-weights are -inf"
+
 
 def _quadratic_energy(x: torch.Tensor) -> torch.Tensor:
     """Simple quadratic energy: E(x) = 0.5 * ||x||^2."""

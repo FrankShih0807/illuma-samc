@@ -59,8 +59,19 @@ class SAMCResult:
 
             w = result.importance_weights
             mean_x = (w.unsqueeze(-1) * result.samples).sum(0)
+
+        Returns zeros if all log-weights are ``-inf`` (no valid samples).
         """
+        import warnings
+
         log_w = self.sample_log_weights
+        if torch.all(log_w == float("-inf")):
+            warnings.warn(
+                "All sample log-weights are -inf — no valid samples for importance weighting. "
+                "Returning zero weights.",
+                stacklevel=2,
+            )
+            return torch.zeros_like(log_w)
         log_w = log_w - torch.logsumexp(log_w, dim=0)
         return torch.exp(log_w)
 
