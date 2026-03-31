@@ -61,6 +61,16 @@ class TestAdaptivePartition:
         # Not enough samples yet — edges unchanged
         assert torch.allclose(p.edges, original_edges)
 
+    def test_adaptive_partition_memory_bounded(self):
+        """Bug C: History should be bounded regardless of iteration count."""
+        p = AdaptivePartition(e_min=0.0, e_max=10.0, n_bins=5, adapt_interval=1000, min_samples=100)
+        max_history = 50_000  # expected default bound
+        for i in range(100_000):
+            p.assign(torch.tensor(float(i % 10)))
+        assert len(p._history) <= max_history, (
+            f"History grew to {len(p._history)}, expected max {max_history}"
+        )
+
 
 class TestQuantilePartition:
     def test_uniform_samples(self):

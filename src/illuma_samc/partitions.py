@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import deque
 
 import torch
 
@@ -83,10 +84,11 @@ class AdaptivePartition(Partition):
         n_bins: int,
         adapt_interval: int = 5000,
         min_samples: int = 1000,
+        max_history: int = 50_000,
     ) -> None:
         self._n_bins = n_bins
         self._edges = torch.linspace(e_min, e_max, n_bins + 1, dtype=torch.float64)
-        self._history: list[float] = []
+        self._history: deque[float] = deque(maxlen=max_history)
         self._adapt_interval = adapt_interval
         self._min_samples = min_samples
         self._call_count = 0
