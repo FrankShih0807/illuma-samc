@@ -2,19 +2,17 @@
 
 **Production-quality Stochastic Approximation Monte Carlo (SAMC) for PyTorch.**
 
-Based on **SAMC by Faming Liang, Chuanhai Liu, and Raymond J. Carroll** — *"Stochastic Approximation in Monte Carlo Computation"*, Journal of the American Statistical Association, 2007.
-
 SAMC is an adaptive MCMC algorithm that overcomes the local-trap problem by learning energy-dependent sampling weights on the fly. Unlike standard Metropolis-Hastings, SAMC explores all energy levels uniformly, making it effective for multimodal optimization and sampling.
 
-## Why SAMC?
+> Based on **Liang, Liu & Carroll** — *Stochastic Approximation in Monte Carlo Computation*, JASA 2007.
 
-**MH gets stuck. SAMC doesn't.**
+## MH Gets Stuck. SAMC Doesn't.
+
+All three algorithms face the same challenge at low temperature (T = 0.1). Same proposal, same energy landscape, same compute budget.
 
 ![SAMC vs MH comparison](assets/samc_vs_others.png)
 
-At low temperature (T=0.1), all three algorithms face the same challenge. MH gets trapped in a single energy region (bottom-left: flat energy trace). Parallel tempering with cold replicas barely explores. **SAMC's learned weights overcome the energy barriers** — it traverses the full energy range (bottom-right: dense oscillations across all levels), visiting every energy region uniformly despite the low temperature.
-
-![illuma-samc demo](assets/demo_showcase.png)
+**Metropolis-Hastings** gets trapped in a single energy basin — the energy trace flatlines. **Parallel Tempering** (8 replicas, 8× the compute) slowly escapes but only covers a limited range. **SAMC** learns sampling weights that overcome energy barriers, traversing the full energy landscape uniformly despite the low temperature.
 
 ## Install
 
@@ -61,7 +59,8 @@ sampler = SAMC(
     dim=2,
     proposal_fn=GaussianProposal(step_size=0.5),
     partition_fn=UniformPartition(e_min=0, e_max=10, n_bins=20),
-    gain=GainSequence("ramp", rho=1.0, tau=1.0, warmup=1, step_scale=1000),
+    gain=GainSequence("1/t", t0=1000),
+    temperature=0.1,  # low temperature for optimization
 )
 result = sampler.run(n_steps=100_000)
 ```
@@ -74,12 +73,29 @@ sampler.plot_diagnostics()  # weight trajectory, energy trace, bin visits, accep
 
 ## Gain Schedules
 
-| Schedule | Formula | Use case |
-|----------|---------|----------|
-| `"1/t"` | γ_t = t₀ / max(t, t₀) | Standard SAMC theory |
-| `"log"` | γ_t = t₀ / max(t·log(t+e), t₀) | Faster decay |
-| `"ramp"` | Warmup then power-law decay | Matches Liang's C implementation |
-| callable | Any `(int) → float` | Custom schedules |
+The gain (step-size) sequence controls how quickly SAMC's log-weights adapt. The general form is:
+
+$$\gamma(t) = \frac{\gamma_0}{(\gamma_1 + t)^\alpha}$$
+
+The classic `"1/t"` schedule is the special case γ₀ = t₀, γ₁ = 0, α = 1, which satisfies the convergence conditions from Liang (2007).
+
+| Schedule | Parameters | Description |
+|----------|-----------|-------------|
+| `"1/t"` (default) | `t0=1000` | γ₀/t — standard SAMC convergence guarantee |
+| `"1/t"` | `gamma0, gamma1, alpha` | General power-law γ₀/(γ₁+t)^α |
+| `"ramp"` | `rho, tau, warmup, step_scale` | Constant warmup then power-law decay |
+| callable | any `(int) → float` | Custom schedule |
+
+```python
+# Standard 1/t with warmup at t0=500
+GainSequence("1/t", t0=500)
+
+# Slower decay: α = 0.6
+GainSequence("1/t", gamma0=100, gamma1=10, alpha=0.6)
+
+# Custom callable
+GainSequence(lambda t: 1.0 / t**0.8)
+```
 
 ## Partition Types
 
@@ -100,40 +116,7 @@ python examples/gaussian_mixture.py   # 4-mode Gaussian demo
 python examples/multimodal_2d.py      # Reproduce Liang's 2D experiment
 ```
 
-## Benchmarks
-
-### Sample Trajectories
-
-The trajectory comparison below shows how each sampler explores the 2D multimodal energy landscape. SAMC covers the entire domain uniformly — MH gets trapped in local basins.
-
-![Trajectory comparison](benchmarks/trajectory_comparison.png)
-
-### Quantitative Results
-
-SAMC vs Metropolis-Hastings vs Parallel Tempering on two problems. All methods use identical proposal, burn-in (10%), and sample collection frequency (every 100th iteration) for fair comparison.
-
-| Problem | Method | Best Energy | Acc. Rate | Energy Evals | Time (s) |
-|---------|--------|-------------|-----------|--------------|----------|
-| 2D Multimodal | SAMC | -8.125 | 0.510 | 500K | 25.4 |
-| 2D Multimodal | MH | -8.125 | 0.439 | 500K | 21.3 |
-| 2D Multimodal | PT (8 replicas) | -8.125 | 0.784 | 4.0M | 176.9 |
-| 10D Gaussian | SAMC | 0.419 | 0.239 | 200K | 4.8 |
-| 10D Gaussian | MH | 0.385 | 0.145 | 200K | 3.4 |
-| 10D Gaussian | PT (8 replicas) | 0.804 | 0.265 | 1.6M | 28.8 |
-
-**Key takeaways:**
-- **Compute fairness:** PT runs 8 replicas per iteration, so it evaluates the energy function 8x more than SAMC or MH at the same iteration count. The "Energy Evals" column makes this cost transparent.
-- **2D multimodal:** All methods find the global minimum (~-8.12). SAMC and MH achieve similar best energy at equal compute cost, but SAMC's flat-histogram exploration ensures all energy levels are visited uniformly. PT has the highest acceptance rate but uses 8x the energy evaluations.
-- **10D Gaussian mixture:** PT finds the best energy (0.804) thanks to replica exchanges, but at 8x the compute cost. SAMC (0.419) outperforms MH (0.385) at identical cost via adaptive weighting.
-
-Run benchmarks yourself:
-```bash
-python benchmarks/vs_mh_pt.py
-```
-
 ## Attribution
-
-This implementation is based on the SAMC algorithm developed by:
 
 > **Faming Liang, Chuanhai Liu, and Raymond J. Carroll.** *Stochastic Approximation in Monte Carlo Computation.* Journal of the American Statistical Association, 102(477):305–320, 2007.
 

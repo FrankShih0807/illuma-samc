@@ -28,22 +28,39 @@ class TestOneOverT:
 
 
 class TestLog:
-    def test_warmup_phase(self):
+    """The 'log' schedule is now an alias for '1/t' (power-law)."""
+
+    def test_log_maps_to_power(self):
         g = GainSequence("log", t0=100)
-        # t * log(t+e) is small early on, so gain = t0/t0 = 1
+        g2 = GainSequence("1/t", t0=100)
+        # Same behavior since log is now an alias
+        assert g(1) == g2(1)
+        assert g(500) == g2(500)
+        assert g(10000) == g2(10000)
+
+
+class TestPowerLaw:
+    """Test the general γ₀ / (γ₁ + t)^α form."""
+
+    def test_default_is_1_over_t(self):
+        g = GainSequence("1/t", t0=100)
+        g2 = GainSequence("1/t", gamma0=100, gamma1=0, alpha=1)
+        assert g(200) == g2(200)
+
+    def test_custom_alpha(self):
+        g = GainSequence("1/t", gamma0=1, gamma1=0, alpha=0.5)
+        # γ(t) = 1 / t^0.5, at t=100 → 0.1
+        assert abs(g(100) - 1 / 100**0.5) < 1e-12
+
+    def test_gamma1_offset(self):
+        g = GainSequence("1/t", gamma0=100, gamma1=10, alpha=1)
+        # γ(t) = 100 / (10 + t)
+        assert abs(g(90) - 100 / 100) < 1e-12
+
+    def test_clamped_to_1(self):
+        g = GainSequence("1/t", gamma0=1000, gamma1=0, alpha=1)
+        # At t=1, raw = 1000/1 = 1000, clamped to 1
         assert g(1) == 1.0
-
-    def test_decay_phase(self):
-        g = GainSequence("log", t0=10)
-        val = g(1000)
-        expected = 10.0 / (1000 * math.log(1000 + math.e))
-        assert abs(val - expected) < 1e-12
-
-    def test_decays_faster_than_one_over_t(self):
-        g_inv = GainSequence("1/t", t0=100)
-        g_log = GainSequence("log", t0=100)
-        # At large t, log schedule decays faster
-        assert g_log(10000) < g_inv(10000)
 
 
 class TestRamp:
