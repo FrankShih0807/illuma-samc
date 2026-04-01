@@ -87,6 +87,7 @@ class SAMCWeights:
         self._n_accepted = 0
         self._last_energy: float | None = None
         self._warmup_done = False
+        self._acceptance_warned = False
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -416,15 +417,20 @@ class SAMCWeights:
             self._n_accepted += 1
         self._last_energy = e
 
-        # Warn if acceptance rate outside 15-50% after warmup
+        # Warn once if acceptance rate outside 15-50% after warmup
         warmup_threshold = 1000
         if self._n_steps == warmup_threshold:
             self._warmup_done = True
-        if self._warmup_done and self._n_steps % warmup_threshold == 0:
+        if (
+            self._warmup_done
+            and not self._acceptance_warned
+            and self._n_steps % warmup_threshold == 0
+        ):
             rate = self._n_accepted / self._n_steps
             if rate < 0.15 or rate > 0.50:
                 import warnings
 
+                self._acceptance_warned = True
                 if rate < 0.15:
                     msg = (
                         f"SAMCWeights: acceptance rate is {rate:.3f} (below 15%). "

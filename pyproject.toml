@@ -20,15 +20,14 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+dependencies = [
+    "torch>=2.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/FrankShih0807/illuma-samc"
 Repository = "https://github.com/FrankShih0807/illuma-samc"
 "Bug Tracker" = "https://github.com/FrankShih0807/illuma-samc/issues"
-
-dependencies = [
-    "torch>=2.0",
-]
 
 [project.optional-dependencies]
 viz = ["matplotlib>=3.7"]

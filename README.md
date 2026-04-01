@@ -1,6 +1,6 @@
 # illuma-samc
 
-[![CI](https://github.com/FrankShih0807/illuma-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/FrankShih0807/illuma-lab/actions/workflows/ci.yml)
+[![CI](https://github.com/FrankShih0807/illuma-samc/actions/workflows/ci.yml/badge.svg)](https://github.com/FrankShih0807/illuma-samc/actions/workflows/ci.yml)
 
 **Your MH sampler gets stuck at low temperature. Fix it with two lines.**
 

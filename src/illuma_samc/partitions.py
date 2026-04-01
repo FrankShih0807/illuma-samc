@@ -63,6 +63,10 @@ class UniformPartition(Partition):
         n_bins: int,
         overflow_bins: bool = False,
     ) -> None:
+        if e_min >= e_max:
+            raise ValueError(f"e_min ({e_min}) must be less than e_max ({e_max})")
+        if n_bins < 1:
+            raise ValueError(f"n_bins must be >= 1, got {n_bins}")
         self._e_min = e_min
         self._e_max = e_max
         self._n_bins_core = n_bins

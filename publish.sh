@@ -31,6 +31,7 @@ EXCLUDE=(
     "reference/"
     "configs/"
     "compare_results.py"
+    "examples/comparison_sample_code.py"
 
     # Internal scripts
     "publish.sh"
