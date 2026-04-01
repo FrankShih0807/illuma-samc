@@ -7,7 +7,7 @@ Read `../AGENT_PLAYBOOK.md` for the full agent hierarchy. To determine your leve
 - **If Frank is talking to you interactively** → you are **L2 Project Lead**. You own this project's direction, make decisions, update STATUS.md and WORKLOG.md.
 - **If you were launched by `watch_todo.sh` or as a subagent** → you are **L3 Worker**. Follow TODO.md steps in order, write WORKLOG.md, create BLOCKED.md if stuck.
 
-Follow the session start/end checklists for your level (AGENT_PLAYBOOK.md Section 5).
+Follow the session start/end checklists for your level (Section 5) and research experiment rules (Section 7) in AGENT_PLAYBOOK.md.
 
 ## Purpose
 Production-quality PyTorch implementation of Stochastic Approximation Monte Carlo (SAMC). Designed for commercial use — easy API, GPU support, extensible.
