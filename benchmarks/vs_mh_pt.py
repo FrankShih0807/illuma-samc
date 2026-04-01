@@ -194,19 +194,17 @@ def plot_trajectories_2d(results_2d: dict):
                 best_x[0], best_x[1],
                 c="white", s=100, marker="*", zorder=5,
                 edgecolors="black", linewidths=0.8,
-                label=f"Best E={results_2d[method]['best_energy']:.3f}",
             )
 
         ax.set_xlim(-1.15, 1.15)
         ax.set_ylim(-1.15, 1.15)
         ax.set_aspect("equal")
         ax.set_title(label, fontsize=12, fontweight="bold", color=ann_c)
-        ax.legend(loc="upper right", fontsize=8)
 
-        # Annotation badge
+        # Annotation badge in upper right
         ax.text(
-            0.98, 0.02, ann, transform=ax.transAxes,
-            ha="right", va="bottom", fontsize=10, fontweight="bold",
+            0.98, 0.98, ann, transform=ax.transAxes,
+            ha="right", va="top", fontsize=10, fontweight="bold",
             color="white", bbox=dict(boxstyle="round,pad=0.3", fc=ann_c, alpha=0.85),
         )
 

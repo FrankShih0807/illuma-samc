@@ -17,13 +17,49 @@ matplotlib.use("Agg")
 RESULTS_DIR = Path("benchmarks/results")
 
 
-def load_results():
-    path = RESULTS_DIR / "benchmark_results.pt"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{path} not found. Run `python benchmarks/run_benchmark.py` first."
-        )
-    return torch.load(path, weights_only=False)
+def load_results(pt_file="pt_8rep.pt"):
+    """Load per-method result files and merge into the old format.
+
+    Supports both new split files (samc.pt, mh.pt, pt_*rep.pt)
+    and legacy single file (benchmark_results.pt).
+    """
+    samc_path = RESULTS_DIR / "samc.pt"
+    mh_path = RESULTS_DIR / "mh.pt"
+    pt_path = RESULTS_DIR / pt_file
+
+    # New split format
+    if samc_path.exists() and mh_path.exists() and pt_path.exists():
+        samc = torch.load(samc_path, weights_only=False)
+        mh = torch.load(mh_path, weights_only=False)
+        pt = torch.load(pt_path, weights_only=False)
+
+        n_replicas = pt["2d"].get("n_replicas", 8)
+
+        results_2d = {"samc": samc["2d"], "mh": mh["2d"], "pt": pt["2d"]}
+        results_10d = {"samc": samc["10d"], "mh": mh["10d"], "pt": pt["10d"]}
+
+        return {
+            "results_2d": results_2d,
+            "results_10d": results_10d,
+            "config": {
+                "n_iters_2d": 500_000,
+                "n_iters_10d": 200_000,
+                "save_every": 100,
+                "burn_in_frac": 0.1,
+                "n_replicas": n_replicas,
+            },
+        }
+
+    # Legacy single file
+    legacy = RESULTS_DIR / "benchmark_results.pt"
+    if legacy.exists():
+        return torch.load(legacy, weights_only=False)
+
+    missing = [p for p in [samc_path, mh_path, pt_path] if not p.exists()]
+    raise FileNotFoundError(
+        f"Missing result files: {missing}. "
+        "Run run_samc.py, run_mh.py, run_pt.py first."
+    )
 
 
 def plot_hero(results_2d: dict):
@@ -94,21 +130,20 @@ def plot_hero(results_2d: dict):
                 zorder=5,
                 edgecolors="black",
                 linewidths=0.8,
-                label=f"Best E={results_2d[method]['best_energy']:.3f}",
             )
 
         ax.set_xlim(-1.15, 1.15)
         ax.set_ylim(-1.15, 1.15)
         ax.set_aspect("equal")
         ax.set_title(label, fontsize=12, fontweight="bold", color=ann_c)
-        ax.legend(loc="upper right", fontsize=8)
+        # Annotation badge in upper right (replacing Best E legend)
         ax.text(
             0.98,
-            0.02,
+            0.98,
             ann,
             transform=ax.transAxes,
             ha="right",
-            va="bottom",
+            va="top",
             fontsize=10,
             fontweight="bold",
             color="white",
@@ -250,7 +285,13 @@ def print_summary_table(data: dict):
 
 
 def main():
-    data = load_results()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pt", default="pt_8rep.pt", help="PT results file in benchmarks/results/")
+    args = parser.parse_args()
+
+    data = load_results(pt_file=args.pt)
     results_2d = data["results_2d"]
     results_10d = data["results_10d"]
 
