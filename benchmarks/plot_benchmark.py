@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 RESULTS_DIR = Path("benchmarks/results")
 
 
-def load_results(pt_file="pt_8rep.pt"):
+def load_results(pt_file="pt_4rep.pt"):
     """Load per-method result files and merge into the old format.
 
     Supports both new split files (samc.pt, mh.pt, pt_*rep.pt)
@@ -33,7 +33,7 @@ def load_results(pt_file="pt_8rep.pt"):
         mh = torch.load(mh_path, weights_only=False)
         pt = torch.load(pt_path, weights_only=False)
 
-        n_replicas = pt["2d"].get("n_replicas", 8)
+        n_replicas = pt["2d"].get("n_replicas", 4)
 
         results_2d = {"samc": samc["2d"], "mh": mh["2d"], "pt": pt["2d"]}
         results_10d = {"samc": samc["10d"], "mh": mh["10d"], "pt": pt["10d"]}
@@ -57,8 +57,7 @@ def load_results(pt_file="pt_8rep.pt"):
 
     missing = [p for p in [samc_path, mh_path, pt_path] if not p.exists()]
     raise FileNotFoundError(
-        f"Missing result files: {missing}. "
-        "Run run_samc.py, run_mh.py, run_pt.py first."
+        f"Missing result files: {missing}. Run run_samc.py, run_mh.py, run_pt.py first."
     )
 
 
@@ -74,7 +73,7 @@ def plot_hero(results_2d: dict):
     xx_np, yy_np = xx.numpy(), yy.numpy()
 
     methods = ["mh", "pt", "samc"]
-    labels = ["Metropolis-Hastings", "Parallel Tempering (8 replicas)", "SAMC (ours)"]
+    labels = ["Metropolis-Hastings", "Parallel Tempering (4 replicas)", "SAMC (ours)"]
     annotations = ["TRAPPED", "LIMITED", "EXPLORES ALL"]
     ann_colors = ["#d32f2f", "#f57c00", "#1976d2"]
     trace_labels = [
@@ -288,7 +287,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pt", default="pt_8rep.pt", help="PT results file in benchmarks/results/")
+    parser.add_argument("--pt", default="pt_4rep.pt", help="PT results file in benchmarks/results/")
     args = parser.parse_args()
 
     data = load_results(pt_file=args.pt)

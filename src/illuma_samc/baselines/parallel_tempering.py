@@ -11,17 +11,17 @@ def run_parallel_tempering(
     energy_fn,
     dim: int,
     n_iters: int,
-    n_replicas: int = 8,
+    n_replicas: int = 4,
     proposal_std: float = 0.25,
-    t_min: float = 1.0,
-    t_max: float = 10.0,
+    t_min: float = 0.1,
+    t_max: float = 3.16,
     swap_interval: int = 10,
     burn_in: int = 0,
     save_every: int = 1,
 ) -> dict:
     """Parallel tempering with geometric temperature ladder.
 
-    Coldest replica runs at t_min (default 1.0 for fair comparison with MH).
+    Coldest replica runs at t_min (default 0.1 to match MH/SAMC temperature).
     """
     temps = torch.logspace(math.log10(t_min), math.log10(t_max), n_replicas)
 

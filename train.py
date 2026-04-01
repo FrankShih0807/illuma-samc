@@ -179,7 +179,7 @@ def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
 def run_pt_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     """Run PT and return results dict."""
     n_iters = cfg.get("n_iters", 500_000)
-    n_replicas = cfg.get("n_replicas", 8)
+    n_replicas = cfg.get("n_replicas", 4)
     save_every = cfg.get("save_every", 100)
     burn_in_frac = cfg.get("burn_in_frac", 0.1)
     burn_in = int(n_iters * burn_in_frac)
@@ -194,8 +194,8 @@ def run_pt_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         n_iters,
         n_replicas=n_replicas,
         proposal_std=cfg.get("proposal_std", 0.25),
-        t_min=cfg.get("t_min", 1.0),
-        t_max=cfg.get("t_max", 10.0),
+        t_min=cfg.get("t_min", 0.1),
+        t_max=cfg.get("t_max", 3.16),
         swap_interval=cfg.get("swap_interval", 10),
         burn_in=burn_in,
         save_every=save_every,

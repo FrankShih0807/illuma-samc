@@ -104,7 +104,7 @@ def benchmark_problem(
 
     # --- Parallel Tempering ---
     torch.manual_seed(42)
-    print(f"  Running PT ({n_iters:,} iters, {pt_kwargs.get('n_replicas', 8)} replicas)...")
+    print(f"  Running PT ({n_iters:,} iters, {pt_kwargs.get('n_replicas', 4)} replicas)...")
     t0 = time.perf_counter()
     pt_result = run_parallel_tempering(
         energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **pt_kwargs
@@ -147,7 +147,7 @@ def plot_trajectories_2d(results_2d: dict):
 
     # Order: MH, PT, SAMC (ours) — builds the narrative
     methods = ["mh", "pt", "samc"]
-    labels = ["Metropolis-Hastings", "Parallel Tempering (8 replicas)", "SAMC (ours)"]
+    labels = ["Metropolis-Hastings", "Parallel Tempering (4 replicas)", "SAMC (ours)"]
     annotations = ["TRAPPED", "LIMITED", "EXPLORES ALL"]
     ann_colors = ["#d32f2f", "#f57c00", "#1976d2"]
     trace_labels = [
@@ -164,9 +164,12 @@ def plot_trajectories_2d(results_2d: dict):
         y=0.98,
     )
     fig.text(
-        0.5, 0.945,
+        0.5,
+        0.945,
         "SAMC\u2019s learned weights overcome energy barriers \u2014 MH and PT cannot.",
-        ha="center", fontsize=11, color="gray",
+        ha="center",
+        fontsize=11,
+        color="gray",
     )
 
     for col, (method, label, ann, ann_c) in enumerate(
@@ -191,9 +194,14 @@ def plot_trajectories_2d(results_2d: dict):
             if isinstance(best_x, torch.Tensor):
                 best_x = best_x.numpy()
             ax.scatter(
-                best_x[0], best_x[1],
-                c="white", s=100, marker="*", zorder=5,
-                edgecolors="black", linewidths=0.8,
+                best_x[0],
+                best_x[1],
+                c="white",
+                s=100,
+                marker="*",
+                zorder=5,
+                edgecolors="black",
+                linewidths=0.8,
             )
 
         ax.set_xlim(-1.15, 1.15)
@@ -203,9 +211,16 @@ def plot_trajectories_2d(results_2d: dict):
 
         # Annotation badge in upper right
         ax.text(
-            0.98, 0.98, ann, transform=ax.transAxes,
-            ha="right", va="top", fontsize=10, fontweight="bold",
-            color="white", bbox=dict(boxstyle="round,pad=0.3", fc=ann_c, alpha=0.85),
+            0.98,
+            0.98,
+            ann,
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=10,
+            fontweight="bold",
+            color="white",
+            bbox=dict(boxstyle="round,pad=0.3", fc=ann_c, alpha=0.85),
         )
 
         # --- Row 2: Energy traces ---
@@ -215,7 +230,9 @@ def plot_trajectories_2d(results_2d: dict):
         ax2.plot(
             np.arange(0, len(energies), e_step),
             energies[::e_step],
-            color="red", alpha=0.7, linewidth=0.5,
+            color="red",
+            alpha=0.7,
+            linewidth=0.5,
         )
         ax2.set_title(trace_labels[col], fontsize=11, fontstyle="italic")
         ax2.set_xlabel("Iteration")
@@ -373,10 +390,10 @@ def main():
         },
         mh_kwargs={"proposal_std": proposal_std_2d, "temperature": 0.1},
         pt_kwargs={
-            "n_replicas": 8,
+            "n_replicas": 4,
             "proposal_std": proposal_std_2d,
             "t_min": 0.1,
-            "t_max": 10.0,
+            "t_max": 3.16,
             "swap_interval": 10,
         },
     )
@@ -403,10 +420,10 @@ def main():
         },
         mh_kwargs={"proposal_std": proposal_std_10d, "temperature": 1.0},
         pt_kwargs={
-            "n_replicas": 8,
+            "n_replicas": 4,
             "proposal_std": proposal_std_10d,
             "t_min": 1.0,
-            "t_max": 20.0,
+            "t_max": 10.0,
             "swap_interval": 10,
         },
     )
@@ -418,7 +435,7 @@ def main():
         results_10d,
         n_iters_2d=n_iters_2d,
         n_iters_10d=n_iters_10d,
-        n_replicas=8,
+        n_replicas=4,
     )
 
 

@@ -1,5 +1,7 @@
 # illuma-samc
 
+[![CI](https://github.com/frankshih/illuma-samc/actions/workflows/ci.yml/badge.svg)](https://github.com/frankshih/illuma-samc/actions/workflows/ci.yml)
+
 **Your MH sampler gets stuck at low temperature. Fix it with two lines.**
 
 ![SAMC vs MH comparison](assets/samc_vs_others.png)

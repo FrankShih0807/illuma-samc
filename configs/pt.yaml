@@ -1,8 +1,8 @@
 2d:
-  n_replicas: 8
+  n_replicas: 4
   proposal_std: 0.05
-  t_min: 1.0
-  t_max: 10.0
+  t_min: 0.1
+  t_max: 3.16
   swap_interval: 10
   n_iters: 500000
   burn_in_frac: 0.1
@@ -10,10 +10,10 @@
   seed: 42
 
 10d:
-  n_replicas: 8
+  n_replicas: 4
   proposal_std: 1.0
   t_min: 1.0
-  t_max: 20.0
+  t_max: 10.0
   swap_interval: 10
   n_iters: 200000
   burn_in_frac: 0.1
@@ -21,10 +21,10 @@
   seed: 42
 
 rosenbrock:
-  n_replicas: 8
+  n_replicas: 4
   proposal_std: 0.1
-  t_min: 1.0
-  t_max: 10.0
+  t_min: 0.1
+  t_max: 3.16
   swap_interval: 10
   n_iters: 500000
   burn_in_frac: 0.1
@@ -32,10 +32,10 @@ rosenbrock:
   seed: 42
 
 rastrigin:
-  n_replicas: 8
+  n_replicas: 4
   proposal_std: 0.5
   t_min: 1.0
-  t_max: 20.0
+  t_max: 10.0
   swap_interval: 10
   n_iters: 500000
   burn_in_frac: 0.1

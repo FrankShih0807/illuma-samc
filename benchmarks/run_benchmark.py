@@ -69,9 +69,7 @@ def benchmark_problem(
     torch.manual_seed(42)
     print(f"  Running MH ({n_iters:,} iters)...")
     t0 = time.perf_counter()
-    mh_result = run_mh(
-        energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **mh_kwargs
-    )
+    mh_result = run_mh(energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **mh_kwargs)
     t_mh = time.perf_counter() - t0
     results["mh"] = {
         "best_energy": mh_result["best_energy"],
@@ -89,7 +87,7 @@ def benchmark_problem(
 
     # --- Parallel Tempering ---
     torch.manual_seed(42)
-    print(f"  Running PT ({n_iters:,} iters, {pt_kwargs.get('n_replicas', 8)} replicas)...")
+    print(f"  Running PT ({n_iters:,} iters, {pt_kwargs.get('n_replicas', 4)} replicas)...")
     t0 = time.perf_counter()
     pt_result = run_parallel_tempering(
         energy_fn, dim, n_iters, burn_in=burn_in, save_every=save_every, **pt_kwargs
@@ -148,10 +146,10 @@ def main():
         },
         mh_kwargs={"proposal_std": proposal_std_2d, "temperature": 0.1},
         pt_kwargs={
-            "n_replicas": 8,
+            "n_replicas": 4,
             "proposal_std": proposal_std_2d,
             "t_min": 0.1,
-            "t_max": 10.0,
+            "t_max": 3.16,
             "swap_interval": 10,
         },
     )
@@ -178,10 +176,10 @@ def main():
         },
         mh_kwargs={"proposal_std": proposal_std_10d, "temperature": 1.0},
         pt_kwargs={
-            "n_replicas": 8,
+            "n_replicas": 4,
             "proposal_std": proposal_std_10d,
             "t_min": 1.0,
-            "t_max": 20.0,
+            "t_max": 10.0,
             "swap_interval": 10,
         },
     )
@@ -196,7 +194,7 @@ def main():
                 "n_iters_10d": n_iters_10d,
                 "save_every": save_every,
                 "burn_in_frac": burn_in_frac,
-                "n_replicas": 8,
+                "n_replicas": 4,
             },
         },
         RESULTS_DIR / "benchmark_results.pt",
