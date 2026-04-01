@@ -49,38 +49,74 @@ class UniformPartition(Partition):
         Upper energy bound.
     n_bins : int
         Number of bins.
+    overflow_bins : bool
+        If ``True``, add two catch-all bins: ``[-inf, e_min]`` (bin 0) and
+        ``[e_max, +inf]`` (last bin). The original bins are shifted by 1.
+        Default ``False`` for backward compatibility.
     """
 
-    def __init__(self, e_min: float, e_max: float, n_bins: int) -> None:
+    def __init__(
+        self,
+        e_min: float,
+        e_max: float,
+        n_bins: int,
+        overflow_bins: bool = False,
+    ) -> None:
         self._e_min = e_min
         self._e_max = e_max
-        self._n_bins = n_bins
+        self._n_bins_core = n_bins
+        self._overflow_bins = overflow_bins
         self._scale = n_bins / (e_max - e_min)
-        self._edges = torch.linspace(e_min, e_max, n_bins + 1)
+
+        inner_edges = torch.linspace(e_min, e_max, n_bins + 1)
+        if overflow_bins:
+            self._edges = torch.cat(
+                [torch.tensor([float("-inf")]), inner_edges, torch.tensor([float("inf")])]
+            )
+        else:
+            self._edges = inner_edges
 
     def assign(self, energy: torch.Tensor) -> int:
-        """Return bin index, or -1 if energy is outside [e_min, e_max]."""
+        """Return bin index, or -1 if energy is outside range (no overflow bins)."""
         e = energy.item() if isinstance(energy, torch.Tensor) else float(energy)
-        if e > self._e_max or e < self._e_min:
-            return -1
-        idx = int((e - self._e_min) * self._scale)
-        return min(idx, self._n_bins - 1)
+        if self._overflow_bins:
+            if e < self._e_min:
+                return 0  # low overflow bin
+            if e > self._e_max:
+                return self._n_bins_core + 1  # high overflow bin
+            idx = int((e - self._e_min) * self._scale)
+            return min(idx, self._n_bins_core - 1) + 1  # shift by 1 for low overflow
+        else:
+            if e > self._e_max or e < self._e_min:
+                return -1
+            idx = int((e - self._e_min) * self._scale)
+            return min(idx, self._n_bins_core - 1)
 
     def assign_batch(self, energies: torch.Tensor) -> torch.Tensor:
         """Vectorized bin assignment using the same formula as :meth:`assign`."""
         idx = ((energies.double() - self._e_min) * self._scale).long()
-        idx = idx.clamp(0, self._n_bins - 1)
-        out_of_range = (energies < self._e_min) | (energies > self._e_max)
-        idx[out_of_range] = -1
+        idx = idx.clamp(0, self._n_bins_core - 1)
+
+        if self._overflow_bins:
+            idx = idx + 1  # shift for low overflow bin
+            below = energies < self._e_min
+            above = energies > self._e_max
+            idx[below] = 0
+            idx[above] = self._n_bins_core + 1
+        else:
+            out_of_range = (energies < self._e_min) | (energies > self._e_max)
+            idx[out_of_range] = -1
         return idx
 
     @property
     def n_partitions(self) -> int:
-        return self._n_bins
+        if self._overflow_bins:
+            return self._n_bins_core + 2
+        return self._n_bins_core
 
     @property
     def edges(self) -> torch.Tensor:
-        """Bin edges as a 1-D tensor of length ``n_bins + 1``."""
+        """Bin edges as a 1-D tensor of length ``n_partitions + 1``."""
         return self._edges
 
 
