@@ -26,7 +26,8 @@ def run_pt_benchmark(name, energy_fn, dim, n_iters, pt_kwargs, burn_in_frac=0.1,
     print(f"  PT ({n_replicas} replicas) — {name}")
     print(f"{'=' * 60}")
     print(
-        f"  {n_iters:,} iters, burn-in={burn_in:,}, save_every={save_every}, n_samples={n_samples:,}"
+        f"  {n_iters:,} iters, burn-in={burn_in:,},"
+        f" save_every={save_every}, n_samples={n_samples:,}"
     )
 
     torch.manual_seed(42)

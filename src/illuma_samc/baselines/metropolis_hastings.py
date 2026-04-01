@@ -1,4 +1,9 @@
-"""Standard Metropolis-Hastings sampler."""
+"""Standard Metropolis-Hastings sampler.
+
+Supports multi-chain mode: pass ``n_chains > 1`` to run independent
+chains in parallel.  Each chain runs the same MH loop with independent
+RNG streams; results are aggregated across chains.
+"""
 
 from __future__ import annotations
 
@@ -7,17 +12,17 @@ import math
 import torch
 
 
-def run_mh(
+def _run_single_mh(
     energy_fn,
     dim: int,
     n_iters: int,
-    proposal_std: float = 0.25,
-    temperature: float = 1.0,
-    x0: torch.Tensor | None = None,
-    burn_in: int = 0,
-    save_every: int = 1,
+    proposal_std: float,
+    temperature: float,
+    x0: torch.Tensor | None,
+    burn_in: int,
+    save_every: int,
 ) -> dict:
-    """Run standard MH. Returns dict of metrics + samples."""
+    """Run a single MH chain. Internal helper."""
     x = x0.clone() if x0 is not None else torch.zeros(dim)
     result = energy_fn(x)
     if isinstance(result, tuple):
@@ -70,4 +75,53 @@ def run_mh(
         "acceptance_rate": accept_count / n_iters,
         "energies": torch.tensor(energies),
         "samples": torch.stack(samples) if samples else torch.empty(0, dim),
+    }
+
+
+def run_mh(
+    energy_fn,
+    dim: int,
+    n_iters: int,
+    proposal_std: float = 0.25,
+    temperature: float = 1.0,
+    x0: torch.Tensor | None = None,
+    burn_in: int = 0,
+    save_every: int = 1,
+    n_chains: int = 1,
+) -> dict:
+    """Run standard MH. Returns dict of metrics + samples.
+
+    Parameters
+    ----------
+    n_chains : int
+        Number of independent chains. Default 1 (single chain).
+        When > 1, runs independent chains and reports the best result.
+        ``energies`` uses the best chain's trace; ``samples`` from the
+        best chain; ``acceptance_rate`` averaged across chains.
+    """
+    if n_chains <= 1:
+        return _run_single_mh(
+            energy_fn, dim, n_iters, proposal_std, temperature, x0, burn_in, save_every
+        )
+
+    # Multi-chain: run independent chains, aggregate
+    chains = []
+    for c in range(n_chains):
+        chain_result = _run_single_mh(
+            energy_fn, dim, n_iters, proposal_std, temperature, None, burn_in, save_every
+        )
+        chains.append(chain_result)
+
+    # Best chain by energy
+    best_idx = min(range(n_chains), key=lambda i: chains[i]["best_energy"])
+    best_chain = chains[best_idx]
+    avg_acc = sum(c["acceptance_rate"] for c in chains) / n_chains
+
+    return {
+        "best_energy": best_chain["best_energy"],
+        "best_x": best_chain["best_x"],
+        "acceptance_rate": avg_acc,
+        "energies": best_chain["energies"],
+        "samples": best_chain["samples"],
+        "n_chains": n_chains,
     }

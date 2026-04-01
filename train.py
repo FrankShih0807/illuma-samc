@@ -138,8 +138,9 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         "energy_autocorr_200": mixing["energy_autocorr_200"],
         "n_round_trips": mixing["n_round_trips"],
         "wall_time": wall_time,
-        "total_energy_evals": n_iters,
+        "total_energy_evals": n_iters * n_chains,
         "n_iters": n_iters,
+        "n_chains": n_chains,
         "sampler": sampler,
         "result": result,
     }
@@ -151,6 +152,7 @@ def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     save_every = cfg.get("save_every", 100)
     burn_in_frac = cfg.get("burn_in_frac", 0.1)
     burn_in = int(n_iters * burn_in_frac)
+    n_chains = cfg.get("n_chains", 1)
 
     seed = cfg.get("seed", 42)
     torch.manual_seed(seed)
@@ -164,6 +166,7 @@ def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         temperature=cfg.get("temperature", 1.0),
         burn_in=burn_in,
         save_every=save_every,
+        n_chains=n_chains,
     )
     wall_time = time.perf_counter() - t0
 
@@ -171,8 +174,9 @@ def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         "best_energy": float(mh_result["best_energy"]),
         "acceptance_rate": float(mh_result["acceptance_rate"]),
         "wall_time": wall_time,
-        "total_energy_evals": n_iters,
+        "total_energy_evals": n_iters * n_chains,
         "n_iters": n_iters,
+        "n_chains": n_chains,
     }
 
 
@@ -291,7 +295,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--output_dir",
         type=str,
         default=None,
-        help="Override output directory (default: outputs/<model>/<algo>/<timestamp>)",
+        help="Override output directory (default: outputs/<model>/<algo>/<name or timestamp>)",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Experiment name for output folder (default: timestamp)",
     )
     parser.add_argument(
         "--partition_type",
@@ -348,11 +358,11 @@ def main():
     metrics = runners[args.algo](energy_fn, dim, cfg)
 
     # Output directory
-    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
-        output_dir = Path("outputs") / args.model / args.algo / timestamp
+        folder = args.name or datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+        output_dir = Path("outputs") / args.model / args.algo / folder
 
     save_results(output_dir, cfg, metrics)
 

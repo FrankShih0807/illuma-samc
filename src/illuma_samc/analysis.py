@@ -109,6 +109,9 @@ def compute_energy_mixing(energy_history: torch.Tensor, n_bins: int = 20) -> dic
         - ``energy_autocorr_200``: autocorrelation at lag 200.
     """
     e = energy_history.float()
+    # Multi-chain: average across chains to get 1-D trace
+    if e.ndim == 2:
+        e = e.mean(dim=1)
     n = len(e)
 
     # --- Autocorrelation ---
