@@ -1,31 +1,36 @@
-"""Lightweight SAMC weight manager — torch.optim style.
+"""Lightweight SAMC weight manager — drop into any MH loop.
 
-The user owns the sampling loop (proposal, energy evaluation, accept/reject).
-This class only manages the bin weights (theta) and provides the SAMC
-acceptance correction.
+SAMC is just MH with a weight correction. If you already have an MH loop,
+add two lines to get SAMC:
 
-Usage::
+**Before (standard MH):**
 
-    wm = SAMCWeights(
-        partition=UniformPartition(e_min=0, e_max=10, n_bins=50),
-        gain=GainSequence("1/t", t0=1000),
-    )
-
-    x = initial_state()
-    fx = energy_fn(x)
+.. code-block:: python
 
     for t in range(1, n_steps + 1):
         x_new = propose(x)
         fy = energy_fn(x_new)
 
-        log_r = wm.log_accept_ratio(fx, fy)
-        accept = log_r > 0 or torch.rand(1).item() < math.exp(log_r)
-
-        if accept:
-            wm.step(t, fy)
+        log_r = (-fy + fx) / T
+        if log_r > 0 or torch.rand(1).item() < math.exp(log_r):
             x, fx = x_new, fy
-        else:
-            wm.step(t, fx)
+
+**After (SAMC):**
+
+.. code-block:: python
+
+    wm = SAMCWeights(partition, gain)                         # <-- new
+
+    for t in range(1, n_steps + 1):
+        x_new = propose(x)
+        fy = energy_fn(x_new)
+
+        log_r = (-fy + fx) / T + wm.correction(fx, fy)       # <-- add correction
+        if log_r > 0 or torch.rand(1).item() < math.exp(log_r):
+            x, fx = x_new, fy
+        wm.step(t, fx)                                        # <-- update weights
+
+That's it. Your MH sampler now explores all energy levels uniformly.
 """
 
 from __future__ import annotations
@@ -37,15 +42,14 @@ from illuma_samc.partitions import Partition
 
 
 class SAMCWeights:
-    r"""Manages SAMC bin weights (theta) with a torch.optim-style interface.
+    r"""Drop-in SAMC weight correction for any Metropolis-Hastings loop.
 
-    This class handles only the weight bookkeeping:
+    Manages the bin weights (theta) that make SAMC overcome energy barriers.
+    Two methods are all you need:
 
-    1. **Log acceptance ratio** — the SAMC correction term
-       :math:`\theta[k_x] - \theta[k_y] + (-E_y + E_x) / T`
-    2. **Weight update** — after accept/reject, update theta and bin counts
-
-    The user controls everything else: proposal, energy evaluation, accept/reject.
+    - :meth:`correction` — returns :math:`\theta[k_x] - \theta[k_y]`,
+      the term you add to your MH log acceptance ratio.
+    - :meth:`step` — updates the weights after accept/reject.
 
     Parameters
     ----------
@@ -53,10 +57,8 @@ class SAMCWeights:
         Energy-space partition (defines bins).
     gain : GainSequence
         Step-size schedule for weight updates.
-    temperature : float
-        Temperature for the energy term in acceptance ratio. Default 1.0.
     device : str or torch.device
-        Device for theta and counts tensors. Default "cpu".
+        Device for theta and counts tensors. Default ``"cpu"``.
     """
 
     def __init__(
@@ -64,21 +66,16 @@ class SAMCWeights:
         partition: Partition,
         gain: GainSequence,
         *,
-        temperature: float = 1.0,
         device: torch.device | str = "cpu",
     ) -> None:
-        if temperature <= 0:
-            raise ValueError(f"temperature must be positive, got {temperature}")
-
         self.partition = partition
         self.gain = gain
-        self.temperature = temperature
 
         n = partition.n_partitions
         self.theta = torch.zeros(n, device=device, dtype=torch.float64)
         self.counts = torch.zeros(n, device=device, dtype=torch.float64)
         self._refden = 1.0 / n
-        self._t = 0  # current iteration (updated on each step)
+        self._t = 0
 
     @property
     def n_bins(self) -> int:
@@ -90,18 +87,23 @@ class SAMCWeights:
         """Current theta vector (log partition weights)."""
         return self.theta
 
-    def log_accept_ratio(
+    def correction(
         self,
         energy_current: float | torch.Tensor,
         energy_proposed: float | torch.Tensor,
     ) -> float:
-        """Compute the SAMC log acceptance ratio.
+        r"""SAMC weight correction to add to your MH log acceptance ratio.
 
-        .. math::
-            \\log r = \\theta[k_x] - \\theta[k_y] + (-E_y + E_x) / T
+        Returns :math:`\theta[k_x] - \theta[k_y]` where :math:`k_x, k_y`
+        are the bin indices for the current and proposed energies.
 
-        Returns ``-inf`` if the proposed energy is out of partition range.
-        Returns ``+inf`` if current energy is out of range but proposed is in range.
+        Add this to your existing MH log ratio::
+
+            log_r = (-fy + fx) / T + wm.correction(fx, fy)
+
+        Returns ``-inf`` if proposed energy is out of partition range
+        (reject the proposal). Returns ``+inf`` if current energy is
+        out of range but proposed is in range (accept to get back in range).
 
         Parameters
         ----------
@@ -113,7 +115,7 @@ class SAMCWeights:
         Returns
         -------
         float
-            Log acceptance ratio (includes SAMC weight correction).
+            The correction term :math:`\theta[k_x] - \theta[k_y]`.
         """
         ex = float(energy_current)
         ey = float(energy_proposed)
@@ -126,20 +128,20 @@ class SAMCWeights:
         if kx < 0:
             return float("inf")
 
-        return self.theta[kx].item() - self.theta[ky].item() + (-ey + ex) / self.temperature
+        return self.theta[kx].item() - self.theta[ky].item()
 
     def step(self, t: int, energy: float | torch.Tensor) -> None:
         """Update bin weights after accept/reject.
 
-        Call this once per iteration with the energy of the *current* state
-        (i.e., the accepted state after accept/reject).
+        Call once per iteration with the energy of the current state
+        (after accept/reject).
 
         Parameters
         ----------
         t : int
-            Current iteration number (1-indexed). Used to compute gain.
+            Iteration number (1-indexed). Used to compute the gain.
         energy : float or Tensor
-            Energy of the current state after accept/reject.
+            Energy of the current state.
         """
         self._t = t
         e = float(energy)

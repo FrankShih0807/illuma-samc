@@ -1,4 +1,4 @@
-"""Tests for SAMCWeights (torch.optim-style interface)."""
+"""Tests for SAMCWeights (drop-in SAMC for MH loops)."""
 
 import math
 
@@ -18,48 +18,54 @@ def make_wm(**kwargs):
     return SAMCWeights(**defaults)
 
 
-class TestLogAcceptRatio:
-    def test_same_energy_same_bin(self):
+class TestCorrection:
+    def test_zero_when_same_bin(self):
         wm = make_wm()
-        # Same energy → theta terms cancel, energy terms cancel → 0
-        assert wm.log_accept_ratio(5.0, 5.0) == 0.0
+        # Same energy, same bin → theta terms cancel → 0
+        assert wm.correction(5.0, 5.0) == 0.0
 
     def test_proposed_out_of_range(self):
         wm = make_wm()
-        assert wm.log_accept_ratio(5.0, 15.0) == float("-inf")
+        assert wm.correction(5.0, 15.0) == float("-inf")
 
     def test_current_out_of_range_proposed_in(self):
         wm = make_wm()
-        assert wm.log_accept_ratio(15.0, 5.0) == float("inf")
+        assert wm.correction(15.0, 5.0) == float("inf")
 
     def test_both_out_of_range(self):
         wm = make_wm()
-        assert wm.log_accept_ratio(15.0, -5.0) == float("-inf")
+        assert wm.correction(15.0, -5.0) == float("-inf")
 
-    def test_lower_energy_preferred(self):
+    def test_correction_is_pure_theta(self):
+        """Correction should be theta[kx] - theta[ky], no energy term."""
         wm = make_wm()
-        # Lower proposed energy → positive log ratio
-        assert wm.log_accept_ratio(8.0, 2.0) > 0
+        # With fresh theta (all zeros), correction is always 0 for in-range
+        assert wm.correction(2.0, 8.0) == 0.0
+        assert wm.correction(8.0, 2.0) == 0.0
 
-    def test_temperature_scales_energy(self):
-        wm1 = make_wm(temperature=1.0)
-        wm2 = make_wm(temperature=2.0)
-        r1 = wm1.log_accept_ratio(8.0, 2.0)
-        r2 = wm2.log_accept_ratio(8.0, 2.0)
-        # Higher temperature → smaller energy contribution
-        assert abs(r2 - r1 / 2.0) < 1e-12
+    def test_correction_reflects_weight_updates(self):
+        wm = make_wm()
+        # Visit bin 5 many times → theta[5] increases
+        for t in range(1, 51):
+            wm.step(t, 5.0)
+        # Correction should discourage moving TO the visited bin
+        # (theta[kx] - theta[ky] is negative when ky is the heavy bin)
+        c = wm.correction(1.0, 5.0)  # proposing to move to visited bin
+        assert c < 0
+        # And encourage moving AWAY from it
+        c2 = wm.correction(5.0, 1.0)
+        assert c2 > 0
 
     def test_accepts_tensor_inputs(self):
         wm = make_wm()
-        r = wm.log_accept_ratio(torch.tensor(5.0), torch.tensor(3.0))
-        assert isinstance(r, float)
-        assert r > 0
+        c = wm.correction(torch.tensor(5.0), torch.tensor(3.0))
+        assert isinstance(c, float)
 
 
 class TestStep:
     def test_updates_theta_and_counts(self):
         wm = make_wm()
-        wm.step(1, 5.0)  # bin 5
+        wm.step(1, 5.0)
         assert wm.counts.sum().item() == 1
         assert wm.theta.sum().abs().item() < 1e-12  # theta sums to ~0
 
@@ -67,12 +73,11 @@ class TestStep:
         wm = make_wm()
         wm.step(1, 5.0)
         k = wm.partition.assign(torch.tensor(5.0))
-        # Visited bin gets extra weight relative to others
         assert wm.theta[k].item() > wm.theta[0].item()
 
     def test_out_of_range_is_noop(self):
         wm = make_wm()
-        wm.step(1, 15.0)  # out of range
+        wm.step(1, 15.0)
         assert wm.counts.sum().item() == 0
         assert (wm.theta == 0).all()
 
@@ -84,36 +89,11 @@ class TestStep:
         assert wm.counts[k].item() == 10
 
 
-class TestMatchesSAMC:
-    """Verify SAMCWeights produces same theta as the full SAMC sampler."""
+class TestMHPlusSAMC:
+    """Test the actual MH + correction pattern."""
 
-    def test_deterministic_trajectory(self):
-        """Run both interfaces with identical accept/reject decisions."""
-        partition = UniformPartition(e_min=-10, e_max=5, n_bins=20)
-        gain = GainSequence("1/t", t0=100)
-
-        wm = SAMCWeights(partition=partition, gain=gain)
-
-        # Simulate 100 steps with deterministic energies
-        torch.manual_seed(42)
-        energies = torch.rand(100) * 15 - 10  # in [-10, 5]
-
-        for t in range(1, 101):
-            e_cur = energies[t - 1].item()
-            # Just update weights with "current" energy (no proposal needed)
-            wm.step(t, e_cur)
-
-        # Verify theta sums to approximately 0 (weight update is zero-sum)
-        assert abs(wm.theta.sum().item()) < 1e-10
-        # Verify counts match number of in-range steps
-        assert wm.counts.sum().item() == 100
-
-
-class TestEndToEndLoop:
-    """Test the full user-owned sampling loop pattern."""
-
-    def test_simple_sampling_loop(self):
-        partition = UniformPartition(e_min=0, e_max=10, n_bins=10)
+    def test_mh_loop_with_correction(self):
+        partition = UniformPartition(e_min=0, e_max=20, n_bins=20)
         gain = GainSequence("1/t", t0=50)
         wm = SAMCWeights(partition=partition, gain=gain)
 
@@ -122,7 +102,8 @@ class TestEndToEndLoop:
             return (x**2).sum().item()
 
         torch.manual_seed(123)
-        x = torch.tensor([1.0])
+        T = 1.0
+        x = torch.tensor([2.0])
         fx = energy_fn(x)
 
         n_accept = 0
@@ -130,9 +111,10 @@ class TestEndToEndLoop:
             x_new = x + 0.5 * torch.randn_like(x)
             fy = energy_fn(x_new)
 
-            log_r = wm.log_accept_ratio(fx, fy)
+            # Standard MH ratio + SAMC correction
+            log_r = (-fy + fx) / T + wm.correction(fx, fy)
 
-            if fy < 0 or fy > 10:
+            if fy < 0 or fy > 20:
                 accept = False
             elif log_r > 0:
                 accept = True
@@ -145,10 +127,45 @@ class TestEndToEndLoop:
 
             wm.step(t, fx)
 
-        # Basic sanity checks
         assert wm.counts.sum().item() == 1000
         assert n_accept > 0
-        assert wm.theta.shape == (10,)
+        assert 0.1 < n_accept / 1000 < 0.95  # reasonable acceptance rate
+
+    def test_low_temperature_still_explores(self):
+        """At low T, standard MH gets stuck. SAMC correction helps."""
+        partition = UniformPartition(e_min=0, e_max=20, n_bins=20)
+        gain = GainSequence("1/t", t0=200)
+        wm = SAMCWeights(partition=partition, gain=gain)
+
+        def energy_fn(x):
+            return (x**2).sum().item()
+
+        torch.manual_seed(42)
+        T = 0.1
+        x = torch.tensor([1.0])
+        fx = energy_fn(x)
+
+        for t in range(1, 5001):
+            x_new = x + 0.3 * torch.randn_like(x)
+            fy = energy_fn(x_new)
+
+            log_r = (-fy + fx) / T + wm.correction(fx, fy)
+
+            if fy < 0 or fy > 20:
+                accept = False
+            elif log_r > 0:
+                accept = True
+            else:
+                accept = math.exp(log_r) > torch.rand(1).item()
+
+            if accept:
+                x, fx = x_new, fy
+
+            wm.step(t, fx)
+
+        # SAMC should visit multiple bins, not just stay near 0
+        visited = (wm.counts > 0).sum().item()
+        assert visited >= 3  # at least 3 bins visited
 
 
 class TestStateDict:
@@ -165,19 +182,3 @@ class TestStateDict:
         assert torch.allclose(wm.theta, wm2.theta)
         assert torch.allclose(wm.counts, wm2.counts)
         assert wm2._t == 50
-
-
-class TestValidation:
-    def test_negative_temperature(self):
-        try:
-            make_wm(temperature=-1.0)
-            assert False, "Should have raised ValueError"
-        except ValueError:
-            pass
-
-    def test_zero_temperature(self):
-        try:
-            make_wm(temperature=0.0)
-            assert False, "Should have raised ValueError"
-        except ValueError:
-            pass
