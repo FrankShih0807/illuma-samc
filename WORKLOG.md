@@ -1,5 +1,21 @@
 # illuma-samc Work Log
 
+## [2026-04-01] Phase 5: Robust Energy Bin Selection (Steps 39-42)
+- **Phase:** prototyping
+- **Status:** done
+- **Summary:**
+  - Steps 39-41 (overflow bins, auto-range warmup, expandable partition) were already implemented in prior sessions. Added Phase 5 to TODO.md and marked them complete.
+  - Step 42: Ran 240 ablation runs (4 problems x 5 wrong-range scenarios x 4 methods x 3 seeds) at 100K iterations each.
+  - Created `ablation/analyze_robust_bins.py` for analysis with heatmaps and bar charts.
+  - Wrote comprehensive `ablation/reports/robust_bins_insights.md`.
+- **Decisions made:**
+  - Auto-Range (from_warmup) is the safest default -- recovers baseline performance in every scenario.
+  - Overflow Bins are surprisingly effective even with completely wrong ranges and should be the recommended safety net.
+  - Wrong energy range kills vanilla SAMC (0% acceptance). e_max too wide is benign; e_min too high is subtle but harmful.
+  - Recommendation: always use overflow_bins=True unless you know the exact range.
+- **Blocked on:** Nothing.
+- **Affects:** Results inform future default parameter choices. Consider making overflow_bins=True the default in a future version.
+
 ## [2026-03-31] Step 24: 2D Multimodal Ablations (Phase 3B)
 - **Phase:** prototyping
 - **Status:** done
