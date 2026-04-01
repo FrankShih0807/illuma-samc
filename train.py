@@ -131,6 +131,49 @@ def _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature):
     }
 
 
+def _run_shared_samc_chains(energy_fn, dim, n_iters, n_chains, wm, proposal_std, temperature):
+    """Run N chains with a shared SAMCWeights, interleaved step-by-step."""
+    import math
+
+    xs = [torch.zeros(dim) for _ in range(n_chains)]
+    fxs = []
+    for x in xs:
+        fx, _ = _eval_energy(energy_fn, x)
+        fxs.append(fx)
+
+    best_x, best_e = xs[0].clone(), fxs[0]
+    accept_counts = [0] * n_chains
+    # Track energies from the best chain (determined at the end)
+    all_energies = [[] for _ in range(n_chains)]
+
+    for t in range(1, n_iters + 1):
+        for c in range(n_chains):
+            x_new = xs[c] + proposal_std * torch.randn(dim)
+            fy, in_r = _eval_energy(energy_fn, x_new)
+            log_r = (-fy + fxs[c]) / temperature + wm.correction(fxs[c], fy)
+
+            if in_r and (log_r > 0 or math.log(torch.rand(1).item() + 1e-300) < log_r):
+                xs[c], fxs[c] = x_new.clone(), fy
+                accept_counts[c] += 1
+
+            wm.step(t * n_chains + c, fxs[c])
+            all_energies[c].append(fxs[c])
+
+            if fxs[c] < best_e:
+                best_e = fxs[c]
+                best_x = xs[c].clone()
+
+    best_chain = min(range(n_chains), key=lambda i: min(all_energies[i]))
+    avg_acc = sum(accept_counts) / (n_iters * n_chains)
+
+    return {
+        "best_energy": best_e,
+        "best_x": best_x,
+        "acceptance_rate": avg_acc,
+        "energies": torch.tensor(all_energies[best_chain]),
+    }
+
+
 def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     """Run SAMC via SAMCWeights and return results dict."""
     n_iters = cfg.get("n_iters", 500_000)
@@ -155,6 +198,7 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     proposal_std = cfg.get("proposal_std", 0.25)
     temperature = cfg.get("temperature", 1.0)
     n_chains = cfg.get("n_chains", 1)
+    shared_weights = cfg.get("shared_weights", True)
 
     t0 = time.perf_counter()
 
@@ -175,9 +219,36 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
             "total_energy_evals": n_iters,
             "n_iters": n_iters,
             "n_chains": 1,
+            "shared_weights": shared_weights,
             "wm": wm,
+            "energies": result["energies"],
+        }
+    elif shared_weights:
+        # Shared weights: all chains update the same SAMCWeights interleaved
+        wm = SAMCWeights(partition=partition, gain=gain)
+        result = _run_shared_samc_chains(
+            energy_fn, dim, n_iters, n_chains, wm, proposal_std, temperature
+        )
+        wall_time = time.perf_counter() - t0
+        mixing = compute_energy_mixing(result["energies"])
+        return {
+            "best_energy": float(result["best_energy"]),
+            "acceptance_rate": float(result["acceptance_rate"]),
+            "bin_flatness": float(wm.flatness()),
+            "round_trip_time": mixing["round_trip_time"],
+            "energy_autocorr_50": mixing["energy_autocorr_50"],
+            "energy_autocorr_200": mixing["energy_autocorr_200"],
+            "n_round_trips": mixing["n_round_trips"],
+            "wall_time": wall_time,
+            "total_energy_evals": n_iters * n_chains,
+            "n_iters": n_iters,
+            "n_chains": n_chains,
+            "shared_weights": True,
+            "wm": wm,
+            "energies": result["energies"],
         }
     else:
+        # Independent weights: each chain gets its own SAMCWeights
         chains = []
         wms = []
         for _c in range(n_chains):
@@ -209,7 +280,9 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
             "total_energy_evals": n_iters * n_chains,
             "n_iters": n_iters,
             "n_chains": n_chains,
+            "shared_weights": False,
             "wm": wms[best_idx],
+            "energies": best["energies"],
         }
 
 
@@ -244,6 +317,7 @@ def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         "total_energy_evals": n_iters * n_chains,
         "n_iters": n_iters,
         "n_chains": n_chains,
+        "energies": mh_result["energies"],
     }
 
 
@@ -281,6 +355,7 @@ def run_pt_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         "total_energy_evals": n_iters * n_replicas,
         "n_iters": n_iters,
         "n_replicas": n_replicas,
+        "energies": pt_result["energies"],
     }
 
 
@@ -298,7 +373,7 @@ def save_results(output_dir: Path, cfg: dict, metrics: dict):
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
     # Save metrics (exclude non-serializable objects)
-    serializable = {k: v for k, v in metrics.items() if k not in ("wm",)}
+    serializable = {k: v for k, v in metrics.items() if k not in ("wm", "energies")}
     with open(output_dir / "results.json", "w") as f:
         json.dump(serializable, f, indent=2)
 
@@ -378,7 +453,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--n_chains", type=int, default=None, help="Number of parallel chains")
     parser.add_argument(
+        "--shared_weights",
+        type=lambda v: v.lower() in ("true", "1", "yes"),
+        default=None,
+        help="Share SAMCWeights across chains (default: true)",
+    )
+    parser.add_argument(
         "--gain_t0", type=float, default=None, help="Override gain_kwargs.t0 (SAMC)"
+    )
+    parser.add_argument(
+        "--plot_energy",
+        action="store_true",
+        help="Show energy vs iteration plot after the run",
     )
     return parser
 
@@ -446,6 +532,27 @@ def main():
     if "swap_rate" in metrics:
         print(f"  Swap rate:         {metrics['swap_rate']:.3f}")
     print(f"  Output saved to:   {output_dir}")
+
+    # Optional energy trace plot
+    if args.plot_energy and "energies" in metrics:
+        import matplotlib.pyplot as plt
+
+        energies = metrics["energies"]
+        if isinstance(energies, torch.Tensor):
+            energies = energies.numpy()
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(energies, linewidth=0.3, alpha=0.7)
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Energy")
+        ax.set_title(f"{args.algo.upper()} on {args.model} — Energy trace")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+
+        plot_path = output_dir / "energy_trace.png"
+        fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+        print(f"  Energy plot saved: {plot_path}")
+        plt.show()
 
 
 if __name__ == "__main__":

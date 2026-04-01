@@ -131,6 +131,7 @@ def compute_energy_mixing(energy_history: torch.Tensor, n_bins: int = 20) -> dic
             "round_trip_time": float("inf"),
             "energy_autocorr_50": 1.0,
             "energy_autocorr_200": 1.0,
+            "n_round_trips": 0,
         }
 
     low_thresh = e_min + 0.2 * (e_max - e_min)

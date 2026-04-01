@@ -1,6 +1,6 @@
 """Generate plots from saved benchmark results.
 
-Reads benchmarks/results/benchmark_results.pt (produced by run_benchmark.py).
+Reads benchmarks/results/{samc,mh,pt_*rep}.pt (produced by run_samc/mh/pt.py).
 """
 
 from pathlib import Path
@@ -18,47 +18,34 @@ RESULTS_DIR = Path("benchmarks/results")
 
 
 def load_results(pt_file="pt_4rep.pt"):
-    """Load per-method result files and merge into the old format.
-
-    Supports both new split files (samc.pt, mh.pt, pt_*rep.pt)
-    and legacy single file (benchmark_results.pt).
-    """
+    """Load per-method result files (samc.pt, mh.pt, pt_*rep.pt)."""
     samc_path = RESULTS_DIR / "samc.pt"
     mh_path = RESULTS_DIR / "mh.pt"
     pt_path = RESULTS_DIR / pt_file
 
-    # New split format
-    if samc_path.exists() and mh_path.exists() and pt_path.exists():
-        samc = torch.load(samc_path, weights_only=False)
-        mh = torch.load(mh_path, weights_only=False)
-        pt = torch.load(pt_path, weights_only=False)
-
-        n_replicas = pt["2d"].get("n_replicas", 4)
-
-        results_2d = {"samc": samc["2d"], "mh": mh["2d"], "pt": pt["2d"]}
-        results_10d = {"samc": samc["10d"], "mh": mh["10d"], "pt": pt["10d"]}
-
-        return {
-            "results_2d": results_2d,
-            "results_10d": results_10d,
-            "config": {
-                "n_iters_2d": 500_000,
-                "n_iters_10d": 200_000,
-                "save_every": 100,
-                "burn_in_frac": 0.1,
-                "n_replicas": n_replicas,
-            },
-        }
-
-    # Legacy single file
-    legacy = RESULTS_DIR / "benchmark_results.pt"
-    if legacy.exists():
-        return torch.load(legacy, weights_only=False)
-
     missing = [p for p in [samc_path, mh_path, pt_path] if not p.exists()]
-    raise FileNotFoundError(
-        f"Missing result files: {missing}. Run run_samc.py, run_mh.py, run_pt.py first."
-    )
+    if missing:
+        raise FileNotFoundError(
+            f"Missing result files: {missing}. Run run_samc.py, run_mh.py, run_pt.py first."
+        )
+
+    samc = torch.load(samc_path, weights_only=False)
+    mh = torch.load(mh_path, weights_only=False)
+    pt = torch.load(pt_path, weights_only=False)
+
+    n_replicas = pt["2d"].get("n_replicas", 4)
+
+    return {
+        "results_2d": {"samc": samc["2d"], "mh": mh["2d"], "pt": pt["2d"]},
+        "results_10d": {"samc": samc["10d"], "mh": mh["10d"], "pt": pt["10d"]},
+        "config": {
+            "n_iters_2d": 500_000,
+            "n_iters_10d": 200_000,
+            "save_every": 100,
+            "burn_in_frac": 0.1,
+            "n_replicas": n_replicas,
+        },
+    }
 
 
 def plot_hero(results_2d: dict):
