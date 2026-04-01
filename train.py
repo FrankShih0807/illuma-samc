@@ -22,8 +22,8 @@ from pathlib import Path
 import torch
 import yaml
 
-from illuma_samc import SAMC
-from illuma_samc.analysis import compute_bin_flatness, compute_energy_mixing
+from illuma_samc import GainSequence, SAMCWeights, UniformPartition
+from illuma_samc.analysis import compute_energy_mixing
 from illuma_samc.baselines import run_mh, run_parallel_tempering
 from illuma_samc.partitions import AdaptivePartition, QuantilePartition
 from illuma_samc.problems import PROBLEMS
@@ -85,13 +85,57 @@ def _build_partition(energy_fn, dim: int, cfg: dict):
     return None
 
 
+def _eval_energy(energy_fn, x):
+    """Evaluate energy, handling (energy, in_region) tuple returns."""
+    result = energy_fn(x)
+    if isinstance(result, tuple):
+        e, in_r = result
+        e = float(e)
+        if isinstance(in_r, torch.Tensor):
+            in_r = bool(in_r.item())
+        return e, in_r
+    return float(result), True
+
+
+def _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature):
+    """Run one MH+SAMCWeights chain. Returns dict."""
+    import math
+
+    x = torch.zeros(dim)
+    fx, _ = _eval_energy(energy_fn, x)
+    best_x, best_e = x.clone(), fx
+    accept_count = 0
+    energies = []
+
+    for t in range(1, n_iters + 1):
+        x_new = x + proposal_std * torch.randn(dim)
+        fy, in_r = _eval_energy(energy_fn, x_new)
+        log_r = (-fy + fx) / temperature + wm.correction(fx, fy)
+
+        if in_r and (log_r > 0 or math.log(torch.rand(1).item() + 1e-300) < log_r):
+            x, fx = x_new.clone(), fy
+            accept_count += 1
+
+        wm.step(t, fx)
+        energies.append(fx)
+
+        if fx < best_e:
+            best_e = fx
+            best_x = x.clone()
+
+    return {
+        "best_energy": best_e,
+        "best_x": best_x,
+        "acceptance_rate": accept_count / n_iters,
+        "energies": torch.tensor(energies),
+    }
+
+
 def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
-    """Run SAMC and return results dict."""
+    """Run SAMC via SAMCWeights and return results dict."""
     n_iters = cfg.get("n_iters", 500_000)
-    save_every = cfg.get("save_every", 100)
 
     gain_kwargs = cfg.get("gain_kwargs", {"rho": 1.0, "tau": 1.0, "warmup": 1, "step_scale": 1000})
-    # Allow gain_t0 CLI override
     if "gain_t0" in cfg:
         gain_kwargs = dict(gain_kwargs)
         gain_kwargs["t0"] = cfg["gain_t0"]
@@ -99,51 +143,74 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     seed = cfg.get("seed", 42)
     torch.manual_seed(seed)
 
-    partition_fn = _build_partition(energy_fn, dim, cfg)
+    partition = _build_partition(energy_fn, dim, cfg)
+    if partition is None:
+        partition = UniformPartition(
+            e_min=cfg.get("e_min", -8.2),
+            e_max=cfg.get("e_max", 0.0),
+            n_bins=cfg.get("n_partitions", 42),
+        )
+    gain_schedule = cfg.get("gain", "ramp")
+    gain = GainSequence(gain_schedule, **gain_kwargs)
+    proposal_std = cfg.get("proposal_std", 0.25)
+    temperature = cfg.get("temperature", 1.0)
+    n_chains = cfg.get("n_chains", 1)
 
     t0 = time.perf_counter()
-    sampler_kwargs = {
-        "energy_fn": energy_fn,
-        "dim": dim,
-        "n_partitions": cfg.get("n_partitions", 42),
-        "e_min": cfg.get("e_min", -8.2),
-        "e_max": cfg.get("e_max", 0.0),
-        "proposal_std": cfg.get("proposal_std", 0.25),
-        "temperature": cfg.get("temperature", 1.0),
-        "gain": cfg.get("gain", "ramp"),
-        "gain_kwargs": gain_kwargs,
-    }
-    if partition_fn is not None:
-        sampler_kwargs["partition_fn"] = partition_fn
-    sampler = SAMC(**sampler_kwargs)
 
-    # Multi-chain support
-    n_chains = cfg.get("n_chains", 1)
-    if n_chains > 1:
-        x0 = torch.randn(n_chains, dim)
+    if n_chains <= 1:
+        wm = SAMCWeights(partition=partition, gain=gain)
+        result = _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature)
+        wall_time = time.perf_counter() - t0
+        mixing = compute_energy_mixing(result["energies"])
+        return {
+            "best_energy": float(result["best_energy"]),
+            "acceptance_rate": float(result["acceptance_rate"]),
+            "bin_flatness": float(wm.flatness()),
+            "round_trip_time": mixing["round_trip_time"],
+            "energy_autocorr_50": mixing["energy_autocorr_50"],
+            "energy_autocorr_200": mixing["energy_autocorr_200"],
+            "n_round_trips": mixing["n_round_trips"],
+            "wall_time": wall_time,
+            "total_energy_evals": n_iters,
+            "n_iters": n_iters,
+            "n_chains": 1,
+            "wm": wm,
+        }
     else:
-        x0 = None
-    result = sampler.run(n_steps=n_iters, x0=x0, save_every=save_every, progress=True)
-    wall_time = time.perf_counter() - t0
+        chains = []
+        wms = []
+        for _c in range(n_chains):
+            p = UniformPartition(
+                e_min=cfg.get("e_min", -8.2),
+                e_max=cfg.get("e_max", 0.0),
+                n_bins=cfg.get("n_partitions", 42),
+            )
+            g = GainSequence(gain_schedule, **gain_kwargs)
+            wm = SAMCWeights(partition=p, gain=g)
+            chain = _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature)
+            chains.append(chain)
+            wms.append(wm)
+        wall_time = time.perf_counter() - t0
 
-    # Compute mixing metrics
-    mixing = compute_energy_mixing(result.energy_history)
-
-    return {
-        "best_energy": float(result.best_energy),
-        "acceptance_rate": float(result.acceptance_rate),
-        "bin_flatness": compute_bin_flatness(result.bin_counts),
-        "round_trip_time": mixing["round_trip_time"],
-        "energy_autocorr_50": mixing["energy_autocorr_50"],
-        "energy_autocorr_200": mixing["energy_autocorr_200"],
-        "n_round_trips": mixing["n_round_trips"],
-        "wall_time": wall_time,
-        "total_energy_evals": n_iters * n_chains,
-        "n_iters": n_iters,
-        "n_chains": n_chains,
-        "sampler": sampler,
-        "result": result,
-    }
+        best_idx = min(range(n_chains), key=lambda i: chains[i]["best_energy"])
+        best = chains[best_idx]
+        avg_acc = sum(c["acceptance_rate"] for c in chains) / n_chains
+        mixing = compute_energy_mixing(best["energies"])
+        return {
+            "best_energy": float(best["best_energy"]),
+            "acceptance_rate": float(avg_acc),
+            "bin_flatness": float(wms[best_idx].flatness()),
+            "round_trip_time": mixing["round_trip_time"],
+            "energy_autocorr_50": mixing["energy_autocorr_50"],
+            "energy_autocorr_200": mixing["energy_autocorr_200"],
+            "n_round_trips": mixing["n_round_trips"],
+            "wall_time": wall_time,
+            "total_energy_evals": n_iters * n_chains,
+            "n_iters": n_iters,
+            "n_chains": n_chains,
+            "wm": wms[best_idx],
+        }
 
 
 def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
@@ -231,17 +298,17 @@ def save_results(output_dir: Path, cfg: dict, metrics: dict):
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
     # Save metrics (exclude non-serializable objects)
-    serializable = {k: v for k, v in metrics.items() if k not in ("sampler", "result")}
+    serializable = {k: v for k, v in metrics.items() if k not in ("wm",)}
     with open(output_dir / "results.json", "w") as f:
         json.dump(serializable, f, indent=2)
 
-    # Save diagnostic plots for SAMC
-    if "sampler" in metrics and "result" in metrics:
+    # Save diagnostic plots for SAMC (SAMCWeights)
+    if "wm" in metrics:
         try:
             import matplotlib
 
             matplotlib.use("Agg")
-            metrics["sampler"].plot_diagnostics()
+            metrics["wm"].plot_diagnostics()
             import matplotlib.pyplot as plt
 
             plt.savefig(output_dir / "diagnostics.png", dpi=150, bbox_inches="tight")

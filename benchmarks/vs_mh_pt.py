@@ -4,9 +4,11 @@ Two test problems:
   1. 2D multimodal cost function from sample_code.py
   2. 10D Gaussian mixture with well-separated modes
 
+SAMC uses SAMCWeights (the main product) in a manual MH loop.
 Metrics: best energy found, acceptance rate, wall-clock time.
 """
 
+import math
 import time
 
 import matplotlib
@@ -14,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from illuma_samc import SAMC
+from illuma_samc import GainSequence, SAMCWeights, UniformPartition
 from illuma_samc.baselines import run_mh, run_parallel_tempering
 from illuma_samc.problems import cost_2d, gaussian_mixture_10d
 
@@ -57,28 +59,73 @@ def benchmark_problem(
         f"save_every={save_every}, n_samples={n_samples:,}"
     )
 
-    # --- SAMC ---
+    # --- SAMC (via SAMCWeights) ---
     torch.manual_seed(42)
-    print(f"  Running SAMC ({n_iters:,} iters)...")
+    print(f"  Running SAMC via SAMCWeights ({n_iters:,} iters)...")
     t0 = time.perf_counter()
-    sampler = SAMC(energy_fn=energy_fn, dim=dim, **samc_kwargs)
-    samc_result = sampler.run(n_steps=n_iters, save_every=save_every, progress=True)
-    t_samc = time.perf_counter() - t0
 
-    burn_in_snapshots = burn_in // save_every
-    samc_samples = samc_result.samples[burn_in_snapshots:]
+    partition = UniformPartition(
+        e_min=samc_kwargs["e_min"],
+        e_max=samc_kwargs["e_max"],
+        n_bins=samc_kwargs["n_partitions"],
+    )
+    gain = GainSequence("ramp", **samc_kwargs["gain_kwargs"])
+    wm = SAMCWeights(partition=partition, gain=gain)
+    T_samc = samc_kwargs.get("temperature", 1.0)
+    std_samc = samc_kwargs["proposal_std"]
+
+    x = torch.zeros(dim)
+    raw = energy_fn(x)
+    if isinstance(raw, tuple):
+        fx, _ = float(raw[0]), raw[1]
+    else:
+        fx = float(raw)
+
+    best_x, best_e = x.clone(), fx
+    accept_count = 0
+    samc_energies = []
+    samc_samples = []
+
+    for t in range(1, n_iters + 1):
+        x_new = x + std_samc * torch.randn(dim)
+        raw = energy_fn(x_new)
+        if isinstance(raw, tuple):
+            fy, in_r = float(raw[0]), raw[1]
+            if isinstance(in_r, torch.Tensor):
+                in_r = bool(in_r.item())
+        else:
+            fy, in_r = float(raw), True
+
+        log_r = (-fy + fx) / T_samc + wm.correction(fx, fy)
+
+        if in_r and (log_r > 0 or math.log(torch.rand(1).item() + 1e-300) < log_r):
+            x, fx = x_new.clone(), fy
+            accept_count += 1
+
+        wm.step(t, fx)
+        samc_energies.append(fx)
+
+        if fx < best_e:
+            best_e = fx
+            best_x = x.clone()
+
+        if t > burn_in and t % save_every == 0:
+            samc_samples.append(x.clone())
+
+    t_samc = time.perf_counter() - t0
+    samc_acc = accept_count / n_iters
 
     results["samc"] = {
-        "best_energy": samc_result.best_energy,
-        "best_x": samc_result.best_x,
-        "acceptance_rate": samc_result.acceptance_rate,
+        "best_energy": best_e,
+        "best_x": best_x,
+        "acceptance_rate": samc_acc,
         "wall_time": t_samc,
-        "energies": samc_result.energy_history.flatten(),
-        "samples": samc_samples,
+        "energies": torch.tensor(samc_energies),
+        "samples": (torch.stack(samc_samples) if samc_samples else torch.empty(0, dim)),
     }
     print(
-        f"    best_E={samc_result.best_energy:.4f}  "
-        f"acc={samc_result.acceptance_rate:.3f}  "
+        f"    best_E={best_e:.4f}  "
+        f"acc={samc_acc:.3f}  "
         f"n_samples={len(samc_samples)}  time={t_samc:.1f}s"
     )
 
