@@ -11,14 +11,18 @@ from illuma_samc.problems import cost_2d, gaussian_mixture_10d
 RESULTS_DIR = Path("benchmarks/results")
 
 
-def run_samc_benchmark(name, energy_fn, dim, n_iters, samc_kwargs, burn_in_frac=0.1, save_every=100):
+def run_samc_benchmark(
+    name, energy_fn, dim, n_iters, samc_kwargs, burn_in_frac=0.1, save_every=100
+):
     burn_in = int(n_iters * burn_in_frac)
     n_samples = (n_iters - burn_in) // save_every
 
     print(f"\n{'=' * 60}")
     print(f"  SAMC — {name}")
     print(f"{'=' * 60}")
-    print(f"  {n_iters:,} iters, burn-in={burn_in:,}, save_every={save_every}, n_samples={n_samples:,}")
+    print(
+        f"  {n_iters:,} iters, burn-in={burn_in:,}, save_every={save_every}, n_samples={n_samples:,}"
+    )
 
     torch.manual_seed(42)
     t0 = time.perf_counter()
