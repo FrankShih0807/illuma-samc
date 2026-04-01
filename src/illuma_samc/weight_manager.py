@@ -67,6 +67,7 @@ class SAMCWeights:
         gain: GainSequence,
         *,
         device: torch.device | str = "cpu",
+        record_every: int = 100,
     ) -> None:
         self.partition = partition
         self.gain = gain
@@ -76,6 +77,16 @@ class SAMCWeights:
         self.counts = torch.zeros(n, device=device, dtype=torch.float64)
         self._refden = 1.0 / n
         self._t = 0
+
+        # History tracking
+        self._record_every = record_every
+        self.bin_counts_history: list[torch.Tensor] = []
+
+        # Acceptance rate tracking
+        self._n_steps = 0
+        self._n_accepted = 0
+        self._last_energy: float | None = None
+        self._warmup_done = False
 
     @property
     def n_bins(self) -> int:
@@ -145,6 +156,34 @@ class SAMCWeights:
         """
         self._t = t
         e = float(energy)
+
+        # Track acceptance rate (energy change implies acceptance)
+        self._n_steps += 1
+        if self._last_energy is not None and e != self._last_energy:
+            self._n_accepted += 1
+        self._last_energy = e
+
+        # Warn if acceptance rate outside 15-50% after warmup
+        warmup_threshold = 1000
+        if self._n_steps == warmup_threshold:
+            self._warmup_done = True
+        if self._warmup_done and self._n_steps % warmup_threshold == 0:
+            rate = self._n_accepted / self._n_steps
+            if rate < 0.15 or rate > 0.50:
+                import warnings
+
+                if rate < 0.15:
+                    msg = (
+                        f"SAMCWeights: acceptance rate is {rate:.3f} (below 15%). "
+                        "Consider increasing proposal_std or temperature."
+                    )
+                else:
+                    msg = (
+                        f"SAMCWeights: acceptance rate is {rate:.3f} (above 50%). "
+                        "Consider decreasing proposal_std or temperature."
+                    )
+                warnings.warn(msg, stacklevel=2)
+
         k = self.partition.assign(torch.tensor(e))
 
         if k < 0:
@@ -155,9 +194,23 @@ class SAMCWeights:
         self.theta[k] += delta
         self.counts[k] += 1
 
+        # Record history snapshot
+        if t % self._record_every == 0:
+            self.bin_counts_history.append(self.counts.clone())
+
     # ------------------------------------------------------------------
     # Diagnostics
     # ------------------------------------------------------------------
+
+    @property
+    def tracked_acceptance_rate(self) -> float:
+        """Acceptance rate tracked internally from energy changes.
+
+        Returns 0.0 if no steps have been taken.
+        """
+        if self._n_steps == 0:
+            return 0.0
+        return self._n_accepted / self._n_steps
 
     def flatness(self) -> float:
         """Bin visit flatness: ``1 - std(counts) / mean(counts)``.
@@ -171,6 +224,22 @@ class SAMCWeights:
         if mean == 0:
             return 0.0
         return float(1.0 - counts.std() / mean)
+
+    def flatness_history(self) -> list[float]:
+        """Flatness at each recorded snapshot.
+
+        Returns a list of flatness values, one per snapshot recorded
+        every ``record_every`` steps.
+        """
+        result = []
+        for snapshot in self.bin_counts_history:
+            c = snapshot.float()
+            mean = c.mean()
+            if mean == 0:
+                result.append(0.0)
+            else:
+                result.append(float(1.0 - c.std() / mean))
+        return result
 
     def importance_log_weights(
         self,
@@ -194,11 +263,14 @@ class SAMCWeights:
             Log importance weights (1-D, same length as *energies*).
             Samples from unvisited bins get ``-inf``.
         """
-        log_w = torch.full(energies.shape, float("-inf"), dtype=torch.float64)
-        for i, e in enumerate(energies):
-            k = self.partition.assign(e)
-            if k >= 0 and self.counts[k] > 0:
-                log_w[i] = self.theta[k].item()
+        bins = self.partition.assign_batch(energies)
+        in_range = bins >= 0
+        # Use clamped bins for indexing (out-of-range get index 0, but masked later)
+        safe_bins = bins.clamp(min=0)
+
+        log_w = self.theta[safe_bins].clone()
+        visited = self.counts[safe_bins] > 0
+        log_w[~(in_range & visited)] = float("-inf")
         return log_w
 
     def importance_weights(
@@ -273,6 +345,21 @@ class SAMCWeights:
         keep = torch.rand(len(samples)) < p
         return samples[keep]
 
+    def plot_diagnostics(self, **kwargs: object) -> object:
+        """Plot diagnostic panels for this weight manager.
+
+        Requires matplotlib. See :func:`diagnostics.plot_weight_diagnostics`
+        for details on the panels and keyword arguments.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The diagnostic figure.
+        """
+        from illuma_samc.diagnostics import plot_weight_diagnostics
+
+        return plot_weight_diagnostics(self, **kwargs)
+
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
@@ -283,6 +370,10 @@ class SAMCWeights:
             "theta": self.theta.clone(),
             "counts": self.counts.clone(),
             "t": self._t,
+            "bin_counts_history": [h.clone() for h in self.bin_counts_history],
+            "n_steps": self._n_steps,
+            "n_accepted": self._n_accepted,
+            "last_energy": self._last_energy,
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -290,3 +381,10 @@ class SAMCWeights:
         self.theta.copy_(state["theta"])
         self.counts.copy_(state["counts"])
         self._t = state["t"]
+        if "bin_counts_history" in state:
+            self.bin_counts_history = [h.clone() for h in state["bin_counts_history"]]
+        if "n_steps" in state:
+            self._n_steps = state["n_steps"]
+            self._n_accepted = state["n_accepted"]
+            self._last_energy = state["last_energy"]
+            self._warmup_done = self._n_steps >= 1000

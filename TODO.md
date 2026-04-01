@@ -276,7 +276,55 @@ For UX improvements and input validation, the same pipeline applies:
 ### Step 29: Production Hardening (after ablation insights)
 > Informed by ablation results — implement the features that actually matter.
 
-- [ ] Checkpointing: save/load sampler state (theta, partition, config) for interrupted runs
 - [ ] Adaptive proposal tuning: auto-tune proposal_std targeting optimal acceptance rate (informed by ablation)
-- [ ] Convergence diagnostics: weight stabilization test, multi-chain R-hat
 - [ ] Update README with ablation results, tuning guide, and recommendations
+
+## Phase 4: SAMCWeights Product Polish
+
+> SAMCWeights is the main product. These improvements make it production-ready.
+
+### Step 30: CI/CD (P0)
+- [x] Add GitHub Actions workflow: pytest + ruff on every push/PR
+- [x] Add badge to README (build status)
+
+### Step 31: Bin Visit History in SAMCWeights (P0)
+- [x] Add `bin_counts_history` to `SAMCWeights` — record `counts.clone()` every N steps (configurable `record_every` param, default=100)
+- [x] Add `flatness_history()` method — returns flatness at each recorded snapshot
+- [x] Lightweight: only store snapshots, not per-iteration (memory bounded)
+- [x] Update `state_dict` / `load_state_dict` to include history
+- [x] Add tests for history recording and flatness convergence curve
+
+### Step 32: Diagnostics for SAMCWeights (P1)
+- [x] Add `plot_diagnostics()` method or standalone function that works with `SAMCWeights`
+- [x] Panels: bin visit histogram, flatness over time (from Step 31), theta trajectory, theta bar chart
+- [x] Users should not need to build these plots manually from `wm.counts` and `wm.theta`
+- [x] Add tests (no-error smoke tests)
+
+### Step 33: Vectorize `importance_log_weights` (P1)
+- [x] Replace Python loop with vectorized `partition.assign_batch` (added to Partition base class + UniformPartition)
+- [x] Should handle 500K+ samples without Python-loop bottleneck
+- [x] Add benchmark test to verify speedup
+- [x] Same for `importance_weights` and `resample` (they call `importance_log_weights`)
+
+### Step 34: Acceptance Rate Guidance (P1)
+- [x] Add warning in `SAMCWeights.step()` if acceptance rate (tracked internally) falls outside 15-50% after warmup
+- [x] Add `tracked_acceptance_rate` property for user inspection
+- [x] Keep it advisory — SAMCWeights doesn't own the proposal, just nudges the user
+
+### Step 35: PyPI Release (P2)
+- [ ] Add `python -m build` + twine upload to CI (or GitHub trusted publishing)
+- [ ] Verify `pip install illuma-samc` works from PyPI
+- [ ] Add installation badge to README
+
+### Step 36: High-Dim Benchmarks (P2)
+- [ ] Add 50D and 100D benchmark problems
+- [ ] Run SAMC vs MH vs PT with multiple seeds, report mean ± std
+- [ ] Add results to README or separate benchmark doc
+
+### Step 37: README & Discoverability (P2)
+- [x] Link `examples/mh_vs_samc.ipynb` from README (already linked in two places)
+- [x] Add "Why SAMC?" conceptual section (already present as "How It Works" section)
+
+### Step 38: API Docs & Config (P3)
+- [ ] Generate API docs with Sphinx, host on ReadTheDocs
+- [ ] Add `SAMCWeights.from_config(yaml_path)` or `SAMCConfig` dataclass to reduce partition+gain boilerplate

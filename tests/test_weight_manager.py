@@ -9,13 +9,13 @@ from illuma_samc.partitions import UniformPartition
 from illuma_samc.weight_manager import SAMCWeights
 
 
-def make_wm(**kwargs):
+def make_wm(record_every=100, **kwargs):
     defaults = {
         "partition": UniformPartition(e_min=0, e_max=10, n_bins=10),
         "gain": GainSequence("1/t", t0=100),
     }
     defaults.update(kwargs)
-    return SAMCWeights(**defaults)
+    return SAMCWeights(**defaults, record_every=record_every)
 
 
 class TestCorrection:
@@ -294,6 +294,95 @@ class TestResample:
         assert resampled_count > 0
 
 
+class TestBinCountsHistory:
+    def test_records_snapshots(self):
+        wm = make_wm(record_every=10)
+        for t in range(1, 101):
+            wm.step(t, float(t % 10))
+        # 100 steps / record_every=10 → 10 snapshots
+        assert len(wm.bin_counts_history) == 10
+
+    def test_snapshot_is_independent_copy(self):
+        wm = make_wm(record_every=10)
+        for t in range(1, 11):
+            wm.step(t, 5.0)
+        # First snapshot should have 10 visits to bin 5
+        snap = wm.bin_counts_history[0]
+        assert snap.sum().item() == 10
+        # Continue stepping — snapshot should not change
+        for t in range(11, 21):
+            wm.step(t, 5.0)
+        assert snap.sum().item() == 10  # still 10, not 20
+
+    def test_default_record_every(self):
+        wm = make_wm()
+        assert wm._record_every == 100
+
+    def test_custom_record_every(self):
+        wm = make_wm(record_every=50)
+        for t in range(1, 201):
+            wm.step(t, 5.0)
+        assert len(wm.bin_counts_history) == 4  # 200/50
+
+    def test_flatness_history(self):
+        wm = make_wm(record_every=10)
+        for t in range(1, 101):
+            wm.step(t, float(t % 10))
+        fh = wm.flatness_history()
+        assert len(fh) == 10
+        # Flatness should generally increase as visits spread out
+        assert all(isinstance(f, float) for f in fh)
+
+    def test_flatness_history_converges(self):
+        """Flatness should improve over time with uniform visits."""
+        wm = make_wm(record_every=50)
+        # Visit bins roughly uniformly
+        for t in range(1, 501):
+            wm.step(t, float(t % 10))
+        fh = wm.flatness_history()
+        # Later snapshots should be at least as flat as earlier ones (roughly)
+        assert fh[-1] >= fh[0] - 0.1  # allow small noise
+
+    def test_flatness_history_empty_when_no_steps(self):
+        wm = make_wm()
+        assert wm.flatness_history() == []
+
+
+class TestAcceptanceRateTracking:
+    def test_tracked_acceptance_rate(self):
+        wm = make_wm()
+        # Step with alternating energies → nearly every step changes energy
+        for t in range(1, 101):
+            energy = 5.0 if t % 2 == 0 else 3.0
+            wm.step(t, energy)
+        rate = wm.tracked_acceptance_rate
+        # Energy changes on 99 of 100 steps (first step has no previous)
+        assert rate > 0.9
+
+    def test_tracked_acceptance_rate_no_steps(self):
+        wm = make_wm()
+        assert wm.tracked_acceptance_rate == 0.0
+
+    def test_tracked_acceptance_rate_all_same(self):
+        wm = make_wm()
+        for t in range(1, 101):
+            wm.step(t, 5.0)
+        assert wm.tracked_acceptance_rate == 0.0
+
+    def test_acceptance_rate_warning_low(self):
+        """Warn when acceptance rate is below 15% after warmup."""
+        import warnings
+
+        wm = make_wm()
+        # Same energy for 1000+ steps → 0% acceptance
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            for t in range(1, 2001):
+                wm.step(t, 5.0)
+            warning_msgs = [str(x.message) for x in w]
+            assert any("below 15%" in msg for msg in warning_msgs)
+
+
 class TestStateDict:
     def test_save_and_load(self):
         wm = make_wm()
@@ -308,3 +397,80 @@ class TestStateDict:
         assert torch.allclose(wm.theta, wm2.theta)
         assert torch.allclose(wm.counts, wm2.counts)
         assert wm2._t == 50
+
+    def test_save_and_load_with_history(self):
+        wm = make_wm(record_every=10)
+        for t in range(1, 51):
+            wm.step(t, 5.0)
+
+        state = wm.state_dict()
+
+        wm2 = make_wm(record_every=10)
+        wm2.load_state_dict(state)
+
+        assert len(wm2.bin_counts_history) == len(wm.bin_counts_history)
+        for h1, h2 in zip(wm.bin_counts_history, wm2.bin_counts_history):
+            assert torch.allclose(h1, h2)
+        assert wm2._n_steps == wm._n_steps
+        assert wm2._n_accepted == wm._n_accepted
+
+    def test_load_old_state_dict_without_history(self):
+        """Backward compatibility: old state_dicts without history fields."""
+        wm = make_wm()
+        old_state = {"theta": wm.theta.clone(), "counts": wm.counts.clone(), "t": 0}
+        wm.load_state_dict(old_state)
+        assert wm.bin_counts_history == []
+
+
+class TestVectorizedImportanceWeights:
+    def test_large_batch(self):
+        """Vectorized importance_log_weights handles large batches."""
+        wm = make_wm()
+        for t in range(1, 101):
+            wm.step(t, float(t % 10))
+        energies = torch.rand(10000) * 10
+        lw = wm.importance_log_weights(energies)
+        assert lw.shape == (10000,)
+
+    def test_matches_scalar_loop(self):
+        """Vectorized version produces same results as scalar loop."""
+        wm = make_wm()
+        for t in range(1, 201):
+            wm.step(t, float(t % 10))
+        energies = torch.tensor([1.0, 3.0, 5.0, 7.0, 9.0, 15.0, -1.0])
+
+        # Vectorized result
+        lw_vec = wm.importance_log_weights(energies)
+
+        # Scalar loop (reference)
+        lw_scalar = torch.full(energies.shape, float("-inf"), dtype=torch.float64)
+        for i, e in enumerate(energies):
+            k = wm.partition.assign(e)
+            if k >= 0 and wm.counts[k] > 0:
+                lw_scalar[i] = wm.theta[k].item()
+
+        assert torch.allclose(lw_vec, lw_scalar, equal_nan=True)
+
+
+class TestPlotDiagnostics:
+    def test_smoke_test(self):
+        """plot_diagnostics should not raise."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        wm = make_wm(record_every=10)
+        for t in range(1, 101):
+            wm.step(t, float(t % 10))
+        fig = wm.plot_diagnostics()
+        assert fig is not None
+
+    def test_smoke_test_no_history(self):
+        """plot_diagnostics should work even without history."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        wm = make_wm(record_every=1000)
+        for t in range(1, 11):
+            wm.step(t, 5.0)
+        fig = wm.plot_diagnostics()
+        assert fig is not None

@@ -15,6 +15,18 @@ class Partition(ABC):
     def assign(self, energy: torch.Tensor) -> int:
         """Return the bin index for a scalar energy value."""
 
+    def assign_batch(self, energies: torch.Tensor) -> torch.Tensor:
+        """Vectorized bin assignment for a 1-D tensor of energies.
+
+        Returns a LongTensor of bin indices. Out-of-range energies get -1.
+        Default implementation calls :meth:`assign` in a loop; subclasses
+        may override for efficiency.
+        """
+        result = torch.empty(energies.shape[0], dtype=torch.long)
+        for i in range(energies.shape[0]):
+            result[i] = self.assign(energies[i])
+        return result
+
     @property
     @abstractmethod
     def n_partitions(self) -> int:
@@ -53,6 +65,14 @@ class UniformPartition(Partition):
             return -1
         idx = int((e - self._e_min) * self._scale)
         return min(idx, self._n_bins - 1)
+
+    def assign_batch(self, energies: torch.Tensor) -> torch.Tensor:
+        """Vectorized bin assignment using the same formula as :meth:`assign`."""
+        idx = ((energies.double() - self._e_min) * self._scale).long()
+        idx = idx.clamp(0, self._n_bins - 1)
+        out_of_range = (energies < self._e_min) | (energies > self._e_max)
+        idx[out_of_range] = -1
+        return idx
 
     @property
     def n_partitions(self) -> int:

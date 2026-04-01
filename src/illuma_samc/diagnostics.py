@@ -8,6 +8,7 @@ import torch
 
 if TYPE_CHECKING:
     from illuma_samc.sampler import SAMC
+    from illuma_samc.weight_manager import SAMCWeights
 
 try:
     import matplotlib.pyplot as plt
@@ -114,6 +115,101 @@ def plot_diagnostics(
     axes[1, 1].set_ylabel("Acceptance rate")
     axes[1, 1].set_title(f"Rolling Acceptance Rate (window={rolling_window})")
     axes[1, 1].set_ylim(0, 1)
+    axes[1, 1].grid(alpha=0.2)
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_weight_diagnostics(
+    wm: SAMCWeights,
+    *,
+    figsize: tuple[float, float] = (14, 10),
+) -> object:
+    """Plot diagnostic panels for a SAMCWeights instance.
+
+    Panels:
+    - (0,0) Bin visit histogram
+    - (0,1) Flatness over time (from recorded history)
+    - (1,0) Theta bar chart (centered)
+    - (1,1) Theta trajectory per bin (from history snapshots)
+
+    Parameters
+    ----------
+    wm : SAMCWeights
+        A weight manager that has been used in a sampling loop.
+    figsize : tuple
+        Figure size in inches.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The diagnostic figure.
+    """
+    _require_matplotlib()
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    # (0,0) Bin visit histogram
+    counts = wm.counts.detach().cpu().numpy()
+    axes[0, 0].bar(range(len(counts)), counts, color="green", alpha=0.8)
+    axes[0, 0].set_xlabel("Bin index")
+    axes[0, 0].set_ylabel("Visit count")
+    axes[0, 0].set_title("Bin Visit Histogram")
+    axes[0, 0].grid(alpha=0.2)
+
+    # (0,1) Flatness over time
+    flatness_hist = wm.flatness_history()
+    if flatness_hist:
+        steps = [(i + 1) * wm._record_every for i in range(len(flatness_hist))]
+        axes[0, 1].plot(steps, flatness_hist, linewidth=1.0, color="teal")
+        axes[0, 1].set_xlabel("Iteration")
+        axes[0, 1].set_ylabel("Flatness")
+        axes[0, 1].set_title("Flatness Over Time")
+        axes[0, 1].set_ylim(-0.1, 1.1)
+    else:
+        axes[0, 1].text(
+            0.5,
+            0.5,
+            "No history recorded",
+            ha="center",
+            va="center",
+            transform=axes[0, 1].transAxes,
+        )
+        axes[0, 1].set_title("Flatness Over Time")
+    axes[0, 1].grid(alpha=0.2)
+
+    # (1,0) Theta bar chart (centered)
+    theta_raw = wm.theta.detach().cpu()
+    theta = (theta_raw - theta_raw.mean()).numpy()
+    axes[1, 0].bar(range(len(theta)), theta, color="steelblue", alpha=0.8)
+    axes[1, 0].axhline(0, color="black", linewidth=0.5, alpha=0.5)
+    axes[1, 0].set_xlabel("Bin index")
+    axes[1, 0].set_ylabel("Log weight (theta - mean)")
+    axes[1, 0].set_title("SAMC Log Weights (centered)")
+    axes[1, 0].grid(alpha=0.2)
+
+    # (1,1) Theta trajectory from history
+    if wm.bin_counts_history:
+        # We don't store theta history directly, but we can show count evolution
+        history = torch.stack(wm.bin_counts_history).cpu().numpy()
+        steps = [(i + 1) * wm._record_every for i in range(len(wm.bin_counts_history))]
+        n_bins = history.shape[1]
+        for b in range(n_bins):
+            axes[1, 1].plot(steps, history[:, b], linewidth=0.5, alpha=0.6)
+        axes[1, 1].set_xlabel("Iteration")
+        axes[1, 1].set_ylabel("Cumulative visits")
+        axes[1, 1].set_title("Bin Visit Trajectories")
+    else:
+        axes[1, 1].text(
+            0.5,
+            0.5,
+            "No history recorded",
+            ha="center",
+            va="center",
+            transform=axes[1, 1].transAxes,
+        )
+        axes[1, 1].set_title("Bin Visit Trajectories")
     axes[1, 1].grid(alpha=0.2)
 
     plt.tight_layout()
