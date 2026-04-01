@@ -355,5 +355,5 @@ For UX improvements and input validation, the same pipeline applies:
 
 ### Step 42: Ablation — Robust Bins
 - [x] Add `--overflow_bins`, `--auto_range`, `--expandable` flags to `train.py`
-- [ ] Run ablations on all 4 problems x 5 scenarios x 4 methods x 3 seeds
-- [ ] Write analysis to `ablation/reports/robust_bins_insights.md`
+- [x] Run ablations on all 4 problems x 5 scenarios x 4 methods x 3 seeds (240 runs)
+- [x] Write analysis to `ablation/reports/robust_bins_insights.md`
