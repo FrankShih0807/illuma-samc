@@ -10,25 +10,25 @@ Same energy landscape. Same proposal. Same compute budget. At T=0.1, **MH gets t
 
 ## How It Works
 
-Standard Metropolis-Hastings samples from the Boltzmann distribution $\pi(x) \propto \exp(-U(x)/T)$. At low temperature, energy barriers become insurmountable and the chain gets trapped in a single mode.
+Let $p(\mathbf{x}) = c \, p_0(\mathbf{x})$ be the target distribution, where $U(\mathbf{x}) = -\log p_0(\mathbf{x})$ is the energy function. Standard Metropolis-Hastings samples from $p(\mathbf{x})$ directly, but at low temperature, energy barriers become insurmountable and the chain gets trapped in a single mode.
 
-SAMC fixes this by learning **bin weights** $\theta_k$ that flatten the energy histogram. The energy space is partitioned into $m$ bins $\{E_1, \ldots, E_m\}$, and the sampler targets a *working density*:
+SAMC partitions the energy space into $m$ disjoint subregions $E_1, \ldots, E_m$ and learns **log-density-of-states estimates** $\theta_t = (\theta_{t1}, \ldots, \theta_{tm})$ that flatten the energy histogram. At iteration $t$, the sampler targets the *working density* (Eq. 3 in Liang et al.):
 
-$$\psi(x) \propto \frac{\pi(x)}{\exp(\theta_{k(x)})}$$
+$$p_{\theta_t}(\mathbf{x}) = \frac{1}{Z_t} \sum_{i=1}^{m} \frac{\psi(\mathbf{x})}{e^{\theta_{ti}}} I(\mathbf{x} \in E_i)$$
 
-where $k(x)$ is the bin index for energy $U(x)$. As $\theta$ converges, $\psi$ becomes approximately uniform across energy levels -- the sampler visits all bins equally, escaping any local trap.
+where $\psi(\mathbf{x})$ is a biasing function (typically set to $p_0(\mathbf{x})$). As $\theta$ converges, $p_{\theta}$ becomes approximately uniform across energy levels -- the sampler visits all subregions equally, escaping any local trap.
 
-The acceptance ratio gains a weight correction term:
+The MH acceptance ratio under the working density gains a weight correction:
 
-$$\alpha = \min\left(1,\; \exp\left(\theta_{k_x} - \theta_{k_y} - \frac{U(y) - U(x)}{T}\right)\right)$$
+$$\alpha = \min\left(1,\; \exp\left(\theta_{J(\mathbf{x})} - \theta_{J(\mathbf{y})} - \frac{U(\mathbf{y}) - U(\mathbf{x})}{T}\right)\right)$$
 
-After each step, the weights are updated via stochastic approximation:
+where $J(\mathbf{x})$ denotes the subregion index for state $\mathbf{x}$. After each step, the weights are updated via stochastic approximation (the SAMC update rule):
 
-$$\theta \leftarrow \theta - \gamma_t \, \pi^* + \gamma_t \, e_{k_t}$$
+$$\theta_{t+1} = \theta_t + \gamma_{t+1}(\mathbf{e}_{t+1} - \boldsymbol{\pi})$$
 
-where $\gamma_t$ is a decreasing gain sequence, $\pi^*$ is the reference distribution (uniform by default), and $e_{k_t}$ is the indicator for the current bin.
+where $\gamma_t = t_0 / \max(t_0, t)$ is a gain sequence satisfying $\sum \gamma_t = \infty$ and $\sum \gamma_t^\zeta < \infty$ for some $\zeta \in (1, 2)$, $\mathbf{e}_{t+1}$ is the indicator vector for the occupied subregion, and $\boldsymbol{\pi} = (\pi_1, \ldots, \pi_m)$ is the desired sampling frequency (uniform by default).
 
-**Recovering the target distribution.** Since SAMC samples from the flattened $\psi$, not the original $\pi$, you recover correct samples via binary resampling: keep each sample with probability $\propto \exp(\theta_{k})$. The resampled set is an unweighted draw from the target $\pi$.
+**Recovering the target distribution.** Since SAMC samples from the flattened $p_{\theta}$, not the original $p$, you recover correct samples via binary resampling: keep each sample $\mathbf{x}$ with probability $\propto \exp(\theta_{J(\mathbf{x})})$. The resampled set is an unweighted draw from the target $p$.
 
 > **Faming Liang, Chuanhai Liu, and Raymond J. Carroll.** *Stochastic Approximation in Monte Carlo Computation.* Journal of the American Statistical Association, 102(477):305-320, 2007.
 
@@ -201,7 +201,7 @@ A: Yes. Set your energy function to the negative log-posterior: `energy_fn = -lo
 
 **Q: What temperature should I use?**
 
-A: Temperature $T$ scales the energy in the Boltzmann factor $\exp(-U(x)/T)$. Low temperature ($T < 1$) sharpens the distribution around minima, making the landscape rugged -- exactly where MH gets trapped and SAMC shines. Start with $T = 1.0$ for exploration, lower it (e.g., $T = 0.1$) to concentrate around the best solutions.
+A: Temperature $T$ scales the energy in the Boltzmann factor $\exp(-U(\mathbf{x})/T)$. Low temperature ($T < 1$) sharpens the distribution around minima, making the landscape rugged -- exactly where MH gets trapped and SAMC shines. Start with $T = 1.0$ for exploration, lower it (e.g., $T = 0.1$) to concentrate around the best solutions.
 
 **Q: When should I use `SAMC` vs `SAMCWeights`?**
 
