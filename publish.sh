@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-PUBLIC_REPO="git@github.com:FrankShih0807/illuma-samc.git"
+PUBLIC_REPO="https://github.com/FrankShih0807/illuma-samc.git"
 EXPORT_DIR="/tmp/illuma-samc-publish"
 BRANCH="main"
 
