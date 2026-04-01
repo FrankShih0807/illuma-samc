@@ -126,4 +126,4 @@ See `CITATION.bib` for the BibTeX entry.
 
 ## License
 
-Proprietary — Illuma Inc.
+Free for academic and non-commercial research use. Commercial use requires permission.

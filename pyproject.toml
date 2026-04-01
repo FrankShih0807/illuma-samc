@@ -7,7 +7,7 @@ name = "illuma-samc"
 version = "0.1.0"
 description = "Production-quality Stochastic Approximation Monte Carlo (SAMC) for PyTorch"
 readme = "README.md"
-license = {text = "Proprietary"}
+license = {text = "Non-Commercial Research Use Only"}
 requires-python = ">=3.11"
 authors = [
     {name = "Frank Shih", email = "fshih37@gmail.com"},

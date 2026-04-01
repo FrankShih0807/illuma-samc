@@ -135,7 +135,7 @@ def benchmark_problem(
 
 
 def plot_trajectories_2d(results_2d: dict):
-    """Plot 2D sample trajectories over the energy landscape contour."""
+    """Plot 2D sample trajectories + energy traces (hero image for README)."""
     grid_n = 200
     xx = torch.linspace(-1.1, 1.1, grid_n)
     yy = torch.linspace(-1.1, 1.1, grid_n)
@@ -143,61 +143,93 @@ def plot_trajectories_2d(results_2d: dict):
     coords = torch.stack([X.flatten(), Y.flatten()], dim=-1)
     Z, _ = cost_2d(coords)
     Z = Z.reshape(grid_n, grid_n).numpy()
+    xx_np, yy_np = xx.numpy(), yy.numpy()
 
-    methods = ["samc", "mh", "pt"]
-    labels = ["SAMC", "MH", "Parallel Tempering"]
+    # Order: MH, PT, SAMC (ours) — builds the narrative
+    methods = ["mh", "pt", "samc"]
+    labels = ["Metropolis-Hastings", "Parallel Tempering (8 replicas)", "SAMC (ours)"]
+    annotations = ["TRAPPED", "LIMITED", "EXPLORES ALL"]
+    ann_colors = ["#d32f2f", "#f57c00", "#1976d2"]
+    trace_labels = [
+        "Stuck at one energy level",
+        "Slowly escapes, limited range",
+        "Traverses all energy levels",
+    ]
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10), height_ratios=[1.2, 1])
     fig.suptitle(
-        "Sample Trajectories on 2D Multimodal Landscape",
-        fontsize=14,
+        "Same Temperature (T = 0.1).  Same Proposal.  Different Algorithm.",
+        fontsize=15,
         fontweight="bold",
+        y=0.98,
+    )
+    fig.text(
+        0.5, 0.945,
+        "SAMC\u2019s learned weights overcome energy barriers \u2014 MH and PT cannot.",
+        ha="center", fontsize=11, color="gray",
     )
 
-    for ax, method, label in zip(axes, methods, labels):
-        ax.contourf(xx.numpy(), yy.numpy(), Z, levels=40, cmap="viridis", alpha=0.6)
+    for col, (method, label, ann, ann_c) in enumerate(
+        zip(methods, labels, annotations, ann_colors)
+    ):
+        # --- Row 1: Trajectories ---
+        ax = axes[0, col]
+        ax.contourf(xx_np, yy_np, Z, levels=40, cmap="viridis", alpha=0.6)
 
         samples = results_2d[method]["samples"]
         if samples.dim() == 3:
             samples = samples[0]
         samples = samples.numpy()
-        n = len(samples)
-        step = max(1, n // 3000)
-        sx, sy = samples[::step, 0], samples[::step, 1]
+        thin = max(1, len(samples) // 3000)
+        sx, sy = samples[::thin, 0], samples[::thin, 1]
 
-        ax.plot(sx, sy, color="red", alpha=0.08, linewidth=0.3, zorder=2)
+        ax.plot(sx, sy, color="red", alpha=0.12, linewidth=0.5, zorder=2)
         ax.scatter(sx, sy, c="red", s=0.5, alpha=0.35, zorder=3)
 
         best_x = results_2d[method].get("best_x", None)
-        if best_x is None and "samples" in results_2d[method]:
-            best_x = results_2d[method]["samples"][0]
         if best_x is not None:
             if isinstance(best_x, torch.Tensor):
                 best_x = best_x.numpy()
             ax.scatter(
-                best_x[0],
-                best_x[1],
-                c="white",
-                s=100,
-                marker="*",
-                zorder=5,
-                edgecolors="black",
-                linewidths=0.8,
+                best_x[0], best_x[1],
+                c="white", s=100, marker="*", zorder=5,
+                edgecolors="black", linewidths=0.8,
                 label=f"Best E={results_2d[method]['best_energy']:.3f}",
             )
 
         ax.set_xlim(-1.15, 1.15)
         ax.set_ylim(-1.15, 1.15)
-        ax.set_title(f"{label}\n(acc={results_2d[method]['acceptance_rate']:.3f})")
-        ax.set_xlabel("x\u2081")
-        ax.set_ylabel("x\u2082")
-        ax.legend(loc="upper right", fontsize=8)
         ax.set_aspect("equal")
+        ax.set_title(label, fontsize=12, fontweight="bold", color=ann_c)
+        ax.legend(loc="upper right", fontsize=8)
 
-    plt.tight_layout()
+        # Annotation badge
+        ax.text(
+            0.98, 0.02, ann, transform=ax.transAxes,
+            ha="right", va="bottom", fontsize=10, fontweight="bold",
+            color="white", bbox=dict(boxstyle="round,pad=0.3", fc=ann_c, alpha=0.85),
+        )
+
+        # --- Row 2: Energy traces ---
+        ax2 = axes[1, col]
+        energies = results_2d[method]["energies"].numpy()
+        e_step = max(1, len(energies) // 5000)
+        ax2.plot(
+            np.arange(0, len(energies), e_step),
+            energies[::e_step],
+            color="red", alpha=0.7, linewidth=0.5,
+        )
+        ax2.set_title(trace_labels[col], fontsize=11, fontstyle="italic")
+        ax2.set_xlabel("Iteration")
+        ax2.set_ylabel("Energy")
+        ax2.set_ylim(-9, 1)
+        ax2.grid(alpha=0.15)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
     plt.savefig("benchmarks/trajectory_comparison.png", dpi=200, bbox_inches="tight")
+    plt.savefig("assets/samc_vs_others.png", dpi=200, bbox_inches="tight")
     plt.close()
-    print("Plot saved to benchmarks/trajectory_comparison.png")
+    print("Plot saved to benchmarks/trajectory_comparison.png + assets/samc_vs_others.png")
 
 
 def plot_comparison(results_2d: dict, results_10d: dict):
@@ -332,6 +364,7 @@ def main():
             "e_min": -8.2,
             "e_max": 0.0,
             "proposal_std": proposal_std_2d,
+            "temperature": 0.1,
             "gain": "ramp",
             "gain_kwargs": {
                 "rho": 1.0,
@@ -340,11 +373,11 @@ def main():
                 "step_scale": 1000,
             },
         },
-        mh_kwargs={"proposal_std": proposal_std_2d, "temperature": 1.0},
+        mh_kwargs={"proposal_std": proposal_std_2d, "temperature": 0.1},
         pt_kwargs={
             "n_replicas": 8,
             "proposal_std": proposal_std_2d,
-            "t_min": 1.0,
+            "t_min": 0.1,
             "t_max": 10.0,
             "swap_interval": 10,
         },
