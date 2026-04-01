@@ -158,6 +158,12 @@ SAMC (Stochastic Approximation Monte Carlo) learns energy-dependent sampling wei
 
 See `CITATION.bib` for the BibTeX entry.
 
+## Acknowledgments
+
+This is the first scientific research project under the [Illuma](https://github.com/FrankShih0807) umbrella — and it was built in collaboration with [Claude](https://claude.ai), Anthropic's AI assistant. From architecture decisions to ablation studies to this README, Claude served as a hands-on research and engineering partner throughout the project.
+
+The SAMC algorithm is due to Faming Liang, Chuanhai Liu, and Raymond J. Carroll (2007).
+
 ## License
 
 Free for academic and non-commercial research use. Commercial use requires permission.
