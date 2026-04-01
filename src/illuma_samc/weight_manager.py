@@ -234,6 +234,12 @@ class SAMCWeights:
             self.counts = self.counts[:n]
         self._refden = 1.0 / n
 
+    def _maybe_resize(self) -> None:
+        """Check if partition expanded and resize theta/counts if needed."""
+        if hasattr(self.partition, "expanded") and self.partition.expanded:
+            self._resize_for_partition()
+            self.partition.expanded = False
+
     @property
     def n_bins(self) -> int:
         """Number of energy bins."""
@@ -278,7 +284,9 @@ class SAMCWeights:
         ey = float(energy_proposed)
 
         kx = self.partition.assign(torch.tensor(ex))
+        self._maybe_resize()
         ky = self.partition.assign(torch.tensor(ey))
+        self._maybe_resize()
 
         if ky < 0:
             return float("-inf")
@@ -331,6 +339,7 @@ class SAMCWeights:
                 warnings.warn(msg, stacklevel=2)
 
         k = self.partition.assign(torch.tensor(e))
+        self._maybe_resize()
 
         if k < 0:
             return
