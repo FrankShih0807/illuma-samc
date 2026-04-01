@@ -2,6 +2,13 @@
 
 > Inherits workspace rules from the root `CLAUDE.md`. This file defines project-specific context.
 
+## Your Role
+Read `../AGENT_PLAYBOOK.md` for the full agent hierarchy. To determine your level:
+- **If Frank is talking to you interactively** → you are **L2 Project Lead**. You own this project's direction, make decisions, update STATUS.md and WORKLOG.md.
+- **If you were launched by `watch_todo.sh` or as a subagent** → you are **L3 Worker**. Follow TODO.md steps in order, write WORKLOG.md, create BLOCKED.md if stuck.
+
+Follow the session start/end checklists for your level (AGENT_PLAYBOOK.md Section 5).
+
 ## Purpose
 Production-quality PyTorch implementation of Stochastic Approximation Monte Carlo (SAMC). Designed for commercial use — easy API, GPU support, extensible.
 
@@ -41,4 +48,4 @@ python examples/gaussian_mixture.py
 - **Test case** — port the `cost()` function and `run_samc()` parameters into the test suite as a known-good benchmark
 
 ## Current Status
-- **Phase:** 1 — Core MVP
+- **Phase:** 3 — Generalizing (ablation complete, robust bins complete)
