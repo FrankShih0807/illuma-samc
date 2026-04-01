@@ -155,6 +155,84 @@ class SAMCWeights:
         self.theta[k] += delta
         self.counts[k] += 1
 
+    # ------------------------------------------------------------------
+    # Diagnostics
+    # ------------------------------------------------------------------
+
+    def flatness(self) -> float:
+        """Bin visit flatness: ``1 - std(counts) / mean(counts)``.
+
+        Returns 1.0 for perfectly flat visits, lower for uneven visits.
+        Values can be negative if visits are extremely skewed.
+        Returns 0.0 if no bins have been visited.
+        """
+        counts = self.counts.float()
+        mean = counts.mean()
+        if mean == 0:
+            return 0.0
+        return float(1.0 - counts.std() / mean)
+
+    def importance_log_weights(
+        self,
+        energies: torch.Tensor,
+    ) -> torch.Tensor:
+        r"""Per-sample importance log-weights for reweighting to the target.
+
+        SAMC samples from a flattened distribution. To recover expectations
+        under the true (Boltzmann) target, weight each sample by
+        :math:`\exp(-\theta[k_i])` (unnormalized).
+
+        Parameters
+        ----------
+        energies : Tensor
+            1-D tensor of energies for each collected sample.
+
+        Returns
+        -------
+        Tensor
+            Log importance weights (1-D, same length as *energies*).
+            Samples from unvisited bins get ``-inf``.
+        """
+        log_w = torch.full(energies.shape, float("-inf"), dtype=torch.float64)
+        for i, e in enumerate(energies):
+            k = self.partition.assign(e)
+            if k >= 0 and self.counts[k] > 0:
+                log_w[i] = -self.theta[k].item()
+        return log_w
+
+    def importance_weights(
+        self,
+        energies: torch.Tensor,
+    ) -> torch.Tensor:
+        """Normalized importance weights that sum to 1.
+
+        Use these to compute expectations under the target distribution::
+
+            weighted_mean = (weights * values).sum()
+
+        Parameters
+        ----------
+        energies : Tensor
+            1-D tensor of energies for each collected sample.
+
+        Returns
+        -------
+        Tensor
+            Normalized importance weights (1-D, sums to 1).
+            Returns zeros if all log-weights are ``-inf``.
+        """
+        log_w = self.importance_log_weights(energies)
+        if (log_w == float("-inf")).all():
+            return torch.zeros_like(log_w)
+        # Stable softmax-style normalization
+        log_w_shifted = log_w - log_w[log_w > float("-inf")].max()
+        w = torch.exp(log_w_shifted)
+        return w / w.sum()
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
     def state_dict(self) -> dict:
         """Return serializable state for checkpointing."""
         return {

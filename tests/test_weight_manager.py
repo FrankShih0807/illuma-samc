@@ -168,6 +168,75 @@ class TestMHPlusSAMC:
         assert visited >= 3  # at least 3 bins visited
 
 
+class TestFlatness:
+    def test_no_visits(self):
+        wm = make_wm()
+        assert wm.flatness() == 0.0
+
+    def test_perfect_flatness(self):
+        wm = make_wm()
+        # Visit every bin equally
+        wm.counts = torch.ones(10, dtype=torch.float64) * 100
+        assert abs(wm.flatness() - 1.0) < 1e-12
+
+    def test_skewed_visits(self):
+        wm = make_wm()
+        wm.counts = torch.zeros(10, dtype=torch.float64)
+        wm.counts[0] = 1000  # all visits in one bin
+        assert wm.flatness() < 0.5
+
+
+class TestImportanceWeights:
+    def test_returns_correct_shape(self):
+        wm = make_wm()
+        for t in range(1, 101):
+            wm.step(t, 5.0)
+        energies = torch.tensor([5.0, 5.0, 5.0])
+        w = wm.importance_weights(energies)
+        assert w.shape == (3,)
+
+    def test_sums_to_one(self):
+        wm = make_wm()
+        # Visit multiple bins
+        for t in range(1, 101):
+            wm.step(t, float(t % 10))
+        energies = torch.tensor([1.0, 3.0, 5.0, 7.0])
+        w = wm.importance_weights(energies)
+        assert abs(w.sum().item() - 1.0) < 1e-10
+
+    def test_out_of_range_gets_zero(self):
+        wm = make_wm()
+        for t in range(1, 51):
+            wm.step(t, 5.0)
+        energies = torch.tensor([5.0, 15.0])  # second is out of range
+        w = wm.importance_weights(energies)
+        assert w[1].item() == 0.0
+
+    def test_unvisited_bin_gets_zero(self):
+        wm = make_wm()
+        # Only visit bin 5
+        for t in range(1, 51):
+            wm.step(t, 5.0)
+        energies = torch.tensor([5.0, 1.0])  # bin 1 unvisited
+        w = wm.importance_weights(energies)
+        assert w[1].item() == 0.0
+        assert w[0].item() > 0.0
+
+    def test_all_out_of_range_returns_zeros(self):
+        wm = make_wm()
+        energies = torch.tensor([15.0, 20.0])
+        w = wm.importance_weights(energies)
+        assert (w == 0).all()
+
+    def test_log_weights_shape(self):
+        wm = make_wm()
+        for t in range(1, 51):
+            wm.step(t, 5.0)
+        energies = torch.tensor([5.0, 3.0])
+        lw = wm.importance_log_weights(energies)
+        assert lw.shape == (2,)
+
+
 class TestStateDict:
     def test_save_and_load(self):
         wm = make_wm()
