@@ -88,6 +88,152 @@ class SAMCWeights:
         self._last_energy: float | None = None
         self._warmup_done = False
 
+    # ------------------------------------------------------------------
+    # Factory methods
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_warmup(
+        cls,
+        energy_fn,
+        dim: int,
+        n_bins: int = 42,
+        warmup_steps: int = 5000,
+        proposal_std: float = 0.25,
+        margin: float = 0.1,
+        gain: str | None = None,
+        gain_kwargs: dict | None = None,
+        *,
+        overflow_bins: bool = False,
+        device: torch.device | str = "cpu",
+        record_every: int = 100,
+    ) -> "SAMCWeights":
+        """Create SAMCWeights with auto-detected energy range from warmup MH.
+
+        Runs ``warmup_steps`` of vanilla Metropolis-Hastings (no weight
+        correction) to estimate the energy range, then constructs a
+        :class:`UniformPartition` with ``margin`` padding on each side.
+
+        Parameters
+        ----------
+        energy_fn : callable
+            ``Tensor -> Tensor`` or ``Tensor -> (Tensor, bool)`` energy function.
+        dim : int
+            Dimensionality of the sample space.
+        n_bins : int
+            Number of core energy bins. Default 42.
+        warmup_steps : int
+            Number of warmup MH steps. Default 5000.
+        proposal_std : float
+            Proposal standard deviation for warmup. Default 0.25.
+        margin : float
+            Fractional margin to pad the observed range. Default 0.1
+            (10% on each side).
+        gain : str or None
+            Gain schedule name. Default ``None`` uses ``"1/t"`` with ``t0=1000``.
+        gain_kwargs : dict or None
+            Extra kwargs for :class:`GainSequence`.
+        overflow_bins : bool
+            Whether to add overflow bins. Default ``False``.
+        device : str or torch.device
+            Device for tensors.
+        record_every : int
+            Snapshot interval for bin counts history.
+
+        Returns
+        -------
+        SAMCWeights
+            Initialized weight manager with auto-detected energy range.
+        """
+        from illuma_samc.partitions import UniformPartition
+
+        # Run warmup MH with no weight correction
+        x = torch.zeros(dim, device=device)
+        raw = energy_fn(x)
+        if isinstance(raw, tuple):
+            fx = float(raw[0])
+        else:
+            fx = float(raw)
+
+        energies_seen = [fx]
+        for _ in range(warmup_steps):
+            x_new = x + proposal_std * torch.randn(dim, device=device)
+            raw = energy_fn(x_new)
+            if isinstance(raw, tuple):
+                fy, in_r = float(raw[0]), bool(raw[1])
+            else:
+                fy, in_r = float(raw), True
+
+            # Simple MH acceptance (no weight correction, T=1)
+            import math
+
+            log_r = -fy + fx
+            if in_r and (log_r > 0 or math.log(torch.rand(1).item() + 1e-300) < log_r):
+                x, fx = x_new.clone(), fy
+
+            energies_seen.append(fx)
+
+        e_min_obs = min(energies_seen)
+        e_max_obs = max(energies_seen)
+        span = e_max_obs - e_min_obs
+        if span < 1e-8:
+            span = 1.0  # avoid degenerate range
+
+        e_min = e_min_obs - margin * span
+        e_max = e_max_obs + margin * span
+
+        partition = UniformPartition(
+            e_min=e_min, e_max=e_max, n_bins=n_bins, overflow_bins=overflow_bins
+        )
+
+        # Build gain
+        if gain is None:
+            gain_schedule = "1/t"
+            gkw = {"t0": 1000}
+        else:
+            gain_schedule = gain
+            gkw = gain_kwargs or {}
+
+        if gain_kwargs is not None and gain is not None:
+            gkw = gain_kwargs
+
+        gain_obj = GainSequence(gain_schedule, **gkw)
+
+        return cls(
+            partition=partition,
+            gain=gain_obj,
+            device=device,
+            record_every=record_every,
+        )
+
+    # ------------------------------------------------------------------
+    # Partition resize support
+    # ------------------------------------------------------------------
+
+    def _resize_for_partition(self) -> None:
+        """Resize theta and counts to match current partition size.
+
+        Called after the partition expands (e.g., :class:`ExpandablePartition`).
+        New bins get theta = 0 and counts = 0.
+        """
+        n = self.partition.n_partitions
+        old_n = self.theta.shape[0]
+        if n == old_n:
+            return
+        if n > old_n:
+            extra = n - old_n
+            device = self.theta.device
+            self.theta = torch.cat(
+                [self.theta, torch.zeros(extra, device=device, dtype=torch.float64)]
+            )
+            self.counts = torch.cat(
+                [self.counts, torch.zeros(extra, device=device, dtype=torch.float64)]
+            )
+        else:
+            self.theta = self.theta[:n]
+            self.counts = self.counts[:n]
+        self._refden = 1.0 / n
+
     @property
     def n_bins(self) -> int:
         """Number of energy bins."""
