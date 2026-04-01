@@ -5,6 +5,7 @@ import torch
 from illuma_samc.partitions import (
     AdaptivePartition,
     ExpandablePartition,
+    GrowingPartition,
     QuantilePartition,
     UniformPartition,
 )
@@ -262,3 +263,149 @@ class TestExpandablePartition:
         p.assign(torch.tensor(15.0))
         assert p.edges.shape[0] == 16  # 15 bins + 1
         assert p.edges[-1].item() > old_edges[-1].item()
+
+
+class TestGrowingPartition:
+    def test_starts_with_3_bins(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0)
+        assert p.n_partitions == 3
+        # Edges: [-inf, -0.5, 0.5, inf]
+        assert p.edges[0].item() == float("-inf")
+        assert p.edges[-1].item() == float("inf")
+
+    def test_first_energy_sets_center(self):
+        p = GrowingPartition(bin_width=1.0)
+        assert p.n_partitions == 2  # placeholder: 0 core + 2 overflow
+        idx = p.assign(torch.tensor(5.0))
+        assert p.n_partitions == 3  # now initialized
+        assert idx == 1  # center bin
+        assert p._e_min == 4.5
+        assert p._e_max == 5.5
+
+    def test_eager_growth_high(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="eager")
+        assert p.n_partitions == 3
+        # Energy at 3.0 is above e_max=0.5, triggers eager expansion
+        idx = p.assign(torch.tensor(3.0))
+        assert p.n_partitions > 3
+        assert idx >= 1  # should be assigned to a core bin, not overflow
+
+    def test_eager_growth_low(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="eager")
+        idx = p.assign(torch.tensor(-3.0))
+        assert p.n_partitions > 3
+        assert idx >= 1  # core bin
+
+    def test_lazy_growth_waits(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="lazy", expand_threshold=5)
+        # First 4 out-of-range visits should NOT trigger expansion
+        for _ in range(4):
+            idx = p.assign(torch.tensor(3.0))
+        assert p.n_partitions == 3  # no growth yet
+        assert idx == 2  # high overflow bin
+
+    def test_lazy_growth_triggers_after_threshold(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="lazy", expand_threshold=5)
+        for _ in range(5):
+            p.assign(torch.tensor(3.0))
+        assert p.n_partitions > 3  # growth triggered
+
+    def test_max_bins_respected(self):
+        p = GrowingPartition(bin_width=0.1, center=0.0, max_bins=10, growth="eager")
+        # Try to force massive expansion
+        p.assign(torch.tensor(100.0))
+        assert p.n_partitions <= 10
+
+    def test_assign_batch(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="eager")
+        energies = torch.tensor([-3.0, 0.0, 3.0])
+        bins = p.assign_batch(energies)
+        assert bins.shape == (3,)
+        assert p.n_partitions > 3  # should have grown
+        # All should be assigned to valid bins
+        assert (bins >= 0).all()
+
+    def test_assign_batch_lazy(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="lazy", expand_threshold=5)
+        # Batch with 6 values above range should trigger growth
+        energies = torch.tensor([3.0] * 6)
+        p.assign_batch(energies)
+        assert p.n_partitions > 3
+
+    def test_edges_shape(self):
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="eager")
+        p.assign(torch.tensor(5.0))
+        assert p.edges.shape[0] == p.n_partitions + 1
+
+    def test_samc_weights_auto_integration(self):
+        """SAMCWeights.auto() runs end-to-end on 2D problem."""
+        import math
+
+        from illuma_samc.problems.multimodal_2d import energy_fn
+        from illuma_samc.weight_manager import SAMCWeights
+
+        wm = SAMCWeights.auto(bin_width=0.2, growth="eager")
+        x = torch.zeros(2)
+        raw = energy_fn(x)
+        fx = float(raw[0]) if isinstance(raw, tuple) else float(raw)
+
+        for t in range(1, 1001):
+            x_new = x + 0.25 * torch.randn(2)
+            raw = energy_fn(x_new)
+            if isinstance(raw, tuple):
+                fy, in_r = float(raw[0]), bool(raw[1])
+            else:
+                fy, in_r = float(raw), True
+
+            log_r = (-fy + fx) / 1.0 + wm.correction(fx, fy)
+            if in_r and (log_r > 0 or math.log(torch.rand(1).item() + 1e-300) < log_r):
+                x, fx = x_new.clone(), fy
+            wm.step(t, fx)
+
+        # Partition should have grown beyond initial 3 bins
+        assert wm.n_bins > 3
+        # Should have some counts
+        assert wm.counts.sum().item() > 0
+
+    def test_resize_preserves_weights_on_high_growth(self):
+        """Weights should be preserved when growing high."""
+        from illuma_samc.gain import GainSequence
+        from illuma_samc.weight_manager import SAMCWeights
+
+        p = GrowingPartition(bin_width=1.0, center=0.0, growth="eager")
+        gain = GainSequence("1/t", t0=50)
+        wm = SAMCWeights(partition=p, gain=gain)
+
+        # Step a few times in range to build up some counts
+        for t in range(1, 5):
+            wm.step(t, 0.0)
+        center_counts = wm.counts[1].item()
+        assert center_counts > 0
+
+        # Now trigger high growth
+        wm.step(5, 5.0)
+        # Center bin counts should be preserved (still at index 1)
+        assert wm.counts[1].item() == center_counts
+
+    def test_resize_preserves_weights_on_low_growth(self):
+        """Weights should be preserved when growing low (bins shift right)."""
+        from illuma_samc.gain import GainSequence
+        from illuma_samc.weight_manager import SAMCWeights
+
+        p = GrowingPartition(bin_width=1.0, center=5.0, growth="eager")
+        gain = GainSequence("1/t", t0=50)
+        wm = SAMCWeights(partition=p, gain=gain)
+
+        # Step in the center bin
+        for t in range(1, 5):
+            wm.step(t, 5.0)
+        old_n = wm.n_bins
+        center_counts = wm.counts[1].item()
+
+        # Trigger low growth
+        wm.step(5, -5.0)
+        new_n = wm.n_bins
+        added = new_n - old_n
+
+        # The old center bin should now be at index 1 + added
+        assert wm.counts[1 + added].item() == center_counts

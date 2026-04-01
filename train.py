@@ -22,7 +22,7 @@ from pathlib import Path
 import torch
 import yaml
 
-from illuma_samc import GainSequence, SAMCWeights, UniformPartition
+from illuma_samc import GainSequence, SAMCWeights, UniformPartition  # noqa: F401
 from illuma_samc.analysis import compute_energy_mixing
 from illuma_samc.baselines import run_mh, run_parallel_tempering
 from illuma_samc.partitions import AdaptivePartition, ExpandablePartition, QuantilePartition
@@ -204,7 +204,20 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
 
     t0 = time.perf_counter()
 
-    if auto_range:
+    growing = cfg.get("growing", False)
+
+    if growing:
+        # Use GrowingPartition via SAMCWeights.auto()
+        bin_width = cfg.get("bin_width", 0.2)
+        wm = SAMCWeights.auto(
+            bin_width=bin_width,
+            max_bins=cfg.get("max_bins", 200),
+            growth=cfg.get("growth", "eager"),
+            expand_threshold=cfg.get("expand_threshold", 10),
+            gain=gain_schedule,
+            gain_kwargs=gain_kwargs,
+        )
+    elif auto_range:
         # Use from_warmup to auto-detect energy range
         overflow_bins = cfg.get("overflow_bins", False)
         wm = SAMCWeights.from_warmup(
@@ -524,6 +537,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Use ExpandablePartition for dynamic bin expansion (SAMC)",
+    )
+    parser.add_argument(
+        "--growing",
+        action="store_true",
+        default=False,
+        help="Use GrowingPartition (auto bin_width, no e_min/e_max needed)",
+    )
+    parser.add_argument(
+        "--bin_width",
+        type=float,
+        default=None,
+        help="Bin width for GrowingPartition (default: 0.2)",
     )
     return parser
 

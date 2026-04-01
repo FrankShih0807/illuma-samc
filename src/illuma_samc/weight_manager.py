@@ -93,6 +93,67 @@ class SAMCWeights:
     # ------------------------------------------------------------------
 
     @classmethod
+    def auto(
+        cls,
+        bin_width: float = 0.2,
+        max_bins: int = 200,
+        growth: str = "eager",
+        expand_threshold: int = 10,
+        gain: str | None = None,
+        gain_kwargs: dict | None = None,
+        *,
+        device: torch.device | str = "cpu",
+        record_every: int = 100,
+    ) -> "SAMCWeights":
+        """Create SAMCWeights with auto-growing partition. No e_min/e_max needed.
+
+        Parameters
+        ----------
+        bin_width : float
+            Width of each regular bin. Default 0.2.
+        max_bins : int
+            Maximum total bins. Default 200.
+        growth : str
+            ``"eager"`` or ``"lazy"`` growth strategy.
+        expand_threshold : int
+            Overflow visits before expanding (lazy mode only).
+        gain : str or None
+            Gain schedule name. Default uses ``"ramp"``.
+        gain_kwargs : dict or None
+            Extra kwargs for :class:`GainSequence`.
+        device : str or torch.device
+            Device for tensors.
+        record_every : int
+            Snapshot interval for bin counts history.
+
+        Returns
+        -------
+        SAMCWeights
+            Weight manager with auto-growing partition.
+        """
+        from illuma_samc.partitions import GrowingPartition
+
+        partition = GrowingPartition(
+            bin_width=bin_width,
+            max_bins=max_bins,
+            growth=growth,
+            expand_threshold=expand_threshold,
+        )
+        default_gain_kwargs = {
+            "rho": 1.0,
+            "tau": 1.0,
+            "warmup": 1,
+            "step_scale": 1000,
+        }
+        gain_obj = GainSequence(gain or "ramp", **(gain_kwargs or default_gain_kwargs))
+        return cls(
+            partition=partition,
+            gain=gain_obj,
+            device=device,
+            record_every=record_every,
+        )
+
+    @classmethod
     def from_warmup(
         cls,
         energy_fn,
@@ -213,25 +274,61 @@ class SAMCWeights:
     def _resize_for_partition(self) -> None:
         """Resize theta and counts to match current partition size.
 
-        Called after the partition expands (e.g., :class:`ExpandablePartition`).
-        New bins get theta = 0 and counts = 0.
+        Called after the partition expands (e.g., :class:`ExpandablePartition`,
+        :class:`GrowingPartition`). New bins get theta = 0 and counts = 0.
+
+        For :class:`GrowingPartition`, handles low-side growth by inserting
+        new bins after the low overflow bin (index 0) to preserve the
+        energy-to-weight correspondence.
         """
         n = self.partition.n_partitions
         old_n = self.theta.shape[0]
         if n == old_n:
             return
+
+        device = self.theta.device
+
+        # Check if GrowingPartition grew on the low side
+        grew_low = getattr(self.partition, "_grew_low_count", 0)
+
         if n > old_n:
             extra = n - old_n
-            device = self.theta.device
-            self.theta = torch.cat(
-                [self.theta, torch.zeros(extra, device=device, dtype=torch.float64)]
-            )
-            self.counts = torch.cat(
-                [self.counts, torch.zeros(extra, device=device, dtype=torch.float64)]
-            )
+            if grew_low > 0:
+                # Insert zeros after the low overflow bin (index 0)
+                # to shift existing core bins to the right
+                low_insert = min(grew_low, extra)
+                high_insert = extra - low_insert
+                self.theta = torch.cat(
+                    [
+                        self.theta[:1],  # low overflow
+                        torch.zeros(low_insert, device=device, dtype=torch.float64),
+                        self.theta[1:],  # old core + high overflow
+                        torch.zeros(high_insert, device=device, dtype=torch.float64),
+                    ]
+                )
+                self.counts = torch.cat(
+                    [
+                        self.counts[:1],
+                        torch.zeros(low_insert, device=device, dtype=torch.float64),
+                        self.counts[1:],
+                        torch.zeros(high_insert, device=device, dtype=torch.float64),
+                    ]
+                )
+            else:
+                self.theta = torch.cat(
+                    [self.theta, torch.zeros(extra, device=device, dtype=torch.float64)]
+                )
+                self.counts = torch.cat(
+                    [self.counts, torch.zeros(extra, device=device, dtype=torch.float64)]
+                )
         else:
             self.theta = self.theta[:n]
             self.counts = self.counts[:n]
+
+        # Reset the low-growth counter
+        if hasattr(self.partition, "_grew_low_count"):
+            self.partition._grew_low_count = 0
+
         self._refden = 1.0 / n
 
     def _maybe_resize(self) -> None:
@@ -239,6 +336,8 @@ class SAMCWeights:
         if hasattr(self.partition, "expanded") and self.partition.expanded:
             self._resize_for_partition()
             self.partition.expanded = False
+        elif self.partition.n_partitions != self.theta.shape[0]:
+            self._resize_for_partition()
 
     @property
     def n_bins(self) -> int:

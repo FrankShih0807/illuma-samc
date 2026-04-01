@@ -9,6 +9,7 @@ from illuma_samc.gain import GainSequence
 from illuma_samc.partitions import (
     AdaptivePartition,
     ExpandablePartition,
+    GrowingPartition,
     QuantilePartition,
     UniformPartition,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "UniformPartition",
     "AdaptivePartition",
     "ExpandablePartition",
+    "GrowingPartition",
     "QuantilePartition",
     "GaussianProposal",
     "LangevinProposal",
