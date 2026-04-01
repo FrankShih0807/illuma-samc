@@ -8,6 +8,8 @@
 
 Same energy landscape. Same proposal. Same compute budget. At T=0.1, **MH gets trapped** in a single basin. **SAMC explores everything**.
 
+**Why does SAMC succeed where MH fails?** SAMC partitions the energy space into bins and learns weights (theta) that flatten the energy histogram. Where MH gets stuck because low-energy regions dominate the Boltzmann distribution, SAMC's learned weights provide a "boost" that lets the sampler escape and visit all energy levels. The trick: SAMC draws samples from a *working density* proportional to the target divided by the learned weights -- a flattened, twisted version of the original distribution. To recover correct samples from the original target, apply binary resampling: keep each sample with probability proportional to the learned weight for its bin. See Liang, Liu, and Carroll (2007) for the full theory.
+
 ## Two Lines. That's It.
 
 If you already have a Metropolis-Hastings loop, add two lines to get SAMC:
@@ -55,6 +57,8 @@ The benchmark plots below use `UniformPartition` with tuned ranges to show SAMC 
 *2D multimodal benchmark, 500K steps, T=0.1. See `examples/mh_vs_samc.ipynb` for the full comparison.*
 
 ## Install
+
+Requires PyTorch >= 2.0. See [pytorch.org](https://pytorch.org) for installation instructions.
 
 ```bash
 pip install -e ".[dev]"
@@ -157,6 +161,30 @@ SAMC (Stochastic Approximation Monte Carlo) learns energy-dependent sampling wei
 > **Faming Liang, Chuanhai Liu, and Raymond J. Carroll.** *Stochastic Approximation in Monte Carlo Computation.* Journal of the American Statistical Association, 102(477):305-320, 2007.
 
 See `CITATION.bib` for the BibTeX entry.
+
+## FAQ
+
+**How do I choose `e_min` and `e_max`?**
+If you don't know your energy range, use `SAMCWeights.auto()` (grows bins on the fly) or `SAMCWeights.from_warmup()` (runs a quick MH warmup to discover the range). If you know the range, explicit `UniformPartition` gives the best bin flatness.
+
+**Can I use SAMC for Bayesian posterior sampling?**
+Yes -- set `energy_fn = -log_posterior`. SAMC samples from a flattened distribution; use `resample()` to recover unweighted draws from your posterior. This is especially useful for multimodal posteriors where standard MCMC gets stuck.
+
+**What temperature should I use?**
+Temperature controls how sharply the sampler concentrates around low-energy regions. Low temperature (T < 1) makes the landscape rugged -- exactly where MH gets trapped and SAMC shines. Start with T=1.0 for exploration, lower it (e.g., T=0.1) to concentrate around minima.
+
+**When should I use `SAMC` vs `SAMCWeights`?**
+- **`SAMCWeights`**: Drop-in for your existing MH loop. You control the proposal, acceptance, and loop -- max flexibility.
+- **`SAMC`**: Batteries-included sampler. Handles the loop, proposals, diagnostics, and burn-in for you.
+
+**How do I choose `t0` in the gain schedule?**
+Rule of thumb: set `t0` between `n_steps / 500` and `n_steps / 100`. Too small = weights oscillate. Too large = slow adaptation. The default works well for most problems.
+
+**Why is my bin flatness low with `auto()`?**
+`auto()` uses growing bins that expand on the fly, so it needs more steps to flatten compared to a fixed partition. For best flatness, use `UniformPartition` with a known energy range. The tradeoff: `auto()` requires zero configuration but needs longer mixing time.
+
+**What does `from_warmup()` do?**
+It runs a short MH warmup (default 2000 steps) to discover your energy range automatically, then creates a fixed `UniformPartition` from the observed range. It's the middle ground between `auto()` (zero config, growing bins) and manual range specification.
 
 ## Acknowledgments
 

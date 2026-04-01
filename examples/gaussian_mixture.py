@@ -36,7 +36,7 @@ def main():
         dim=2,
         n_partitions=20,
         e_min=0.0,
-        e_max=20.0,
+        e_max=40.0,
         proposal_std=0.5,
         gain="1/t",
         gain_kwargs={"t0": 1000},

@@ -105,11 +105,13 @@ class SAMC:
     dim : int
         Dimensionality of the sample space.
     n_partitions : int
-        Number of energy bins.
-    e_min : float
-        Lower energy bound for uniform partition (simple mode).
-    e_max : float
-        Upper energy bound for uniform partition (simple mode).
+        Number of energy bins (simple mode with explicit range).
+    e_min : float, optional
+        Lower energy bound for uniform partition (simple mode). Default 0.0.
+    e_max : float, optional
+        Upper energy bound for uniform partition (simple mode). Default 20.0.
+        If neither ``e_min``, ``e_max``, nor ``partition_fn`` are specified,
+        auto-range mode is used (growing bins, no range needed).
     proposal_std : float
         Gaussian proposal step size (simple mode).
     temperature : float
@@ -130,6 +132,8 @@ class SAMC:
         Extra keyword arguments forwarded to :class:`GainSequence`.
     """
 
+    _UNSET = object()  # sentinel for detecting unspecified e_min/e_max
+
     def __init__(
         self,
         energy_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
@@ -137,8 +141,8 @@ class SAMC:
         dim: int,
         n_partitions: int = 42,
         n_bins: int | None = None,
-        e_min: float = -8.2,
-        e_max: float = 0.0,
+        e_min: float = _UNSET,
+        e_max: float = _UNSET,
         proposal_std: float = 0.25,
         temperature: float = 1.0,
         gain: GainSequence | str = "ramp",
@@ -153,15 +157,25 @@ class SAMC:
         if n_bins is not None:
             n_partitions = n_bins
 
+        # Detect whether user explicitly set e_min/e_max
+        user_set_range = e_min is not self._UNSET or e_max is not self._UNSET
+        if e_min is self._UNSET:
+            e_min = 0.0
+        if e_max is self._UNSET:
+            e_max = 20.0
+
+        # Detect whether user explicitly set n_partitions/n_bins
+        user_set_bins = n_bins is not None or n_partitions != 42
+
         # --- Input validation ---
         if dim <= 0:
             raise ValueError("dim must be positive")
         if proposal_fn is None and proposal_std <= 0:
             raise ValueError("proposal_std must be positive")
         if partition_fn is None:
-            if n_partitions <= 0:
+            if user_set_bins and n_partitions <= 0:
                 raise ValueError("n_bins must be positive")
-            if e_min >= e_max:
+            if user_set_range and e_min >= e_max:
                 raise ValueError("e_min must be less than e_max")
 
         if temperature <= 0:
@@ -184,10 +198,16 @@ class SAMC:
         self._log_accept_fn = log_accept_fn
 
         # --- Partition ---
+        self._auto_range = False
         if partition_fn is not None:
             self._partition = partition_fn
-        else:
+        elif user_set_range:
             self._partition = UniformPartition(e_min, e_max, n_partitions)
+        else:
+            # Auto-range: will run a warmup to discover energy range before main loop
+            self._auto_range = True
+            self._auto_n_partitions = n_partitions
+            self._partition = UniformPartition(e_min, e_max, n_partitions)  # placeholder
 
         # --- Gain ---
         if isinstance(gain, GainSequence):
@@ -250,6 +270,7 @@ class SAMC:
         x0: torch.Tensor | None = None,
         *,
         save_every: int = 100,
+        burn_in: int = 0,
         progress: bool = True,
         seed: int | None = None,
     ) -> SAMCResult:
@@ -264,6 +285,9 @@ class SAMC:
             for *N* parallel chains with shared weights.
         save_every : int
             Store a sample every this many iterations.
+        burn_in : int
+            Number of initial samples to discard from the result. Applied
+            after the run: the first ``burn_in`` saved samples are dropped.
         progress : bool
             Show a tqdm progress bar (if tqdm is installed).
 
@@ -277,9 +301,26 @@ class SAMC:
             torch.manual_seed(seed)
         if n_steps <= 0:
             raise ValueError("n_steps must be positive")
+        if burn_in < 0:
+            raise ValueError("burn_in must be non-negative")
         if x0 is not None and x0.dim() == 2:
-            return self._run_multi_chain(n_steps, x0, save_every=save_every, progress=progress)
-        return self._run_single_chain(n_steps, x0, save_every=save_every, progress=progress)
+            result = self._run_multi_chain(n_steps, x0, save_every=save_every, progress=progress)
+        else:
+            result = self._run_single_chain(n_steps, x0, save_every=save_every, progress=progress)
+
+        if burn_in > 0 and result.samples.shape[-2] > burn_in:
+            # For multi-chain: shape (N, n_saved, dim), for single: (n_saved, dim)
+            result = SAMCResult(
+                samples=result.samples[..., burn_in:, :],
+                log_weights=result.log_weights,
+                sample_log_weights=result.sample_log_weights[..., burn_in:],
+                energy_history=result.energy_history,
+                bin_counts=result.bin_counts,
+                acceptance_rate=result.acceptance_rate,
+                best_x=result.best_x,
+                best_energy=result.best_energy,
+            )
+        return result
 
     def _run_single_chain(
         self,
@@ -293,6 +334,29 @@ class SAMC:
 
         # Initialize state
         x = x0.to(device).clone() if x0 is not None else torch.zeros(self._dim, device=device)
+
+        # Auto-range: run a short MH warmup to discover energy range
+        if self._auto_range:
+            warmup_energies = []
+            x_warmup = x.clone()
+            fx_warmup, _ = self._compute_energy(x_warmup)
+            warmup_energies.append(fx_warmup.item())
+            for _ in range(2000):
+                x_new = self._proposal.propose(x_warmup)
+                fy, in_reg = self._compute_energy(x_new)
+                log_r = (-fy.item() + fx_warmup.item()) / self._temperature
+                if in_reg and (log_r > 0 or torch.rand(1).item() < math.exp(min(log_r, 0))):
+                    x_warmup = x_new
+                    fx_warmup = fy
+                warmup_energies.append(fx_warmup.item())
+            e_min_auto = min(warmup_energies)
+            e_max_auto = max(warmup_energies)
+            margin = max(0.1 * (e_max_auto - e_min_auto), 0.5)
+            self._partition = UniformPartition(
+                e_min_auto - margin, e_max_auto + margin, self._auto_n_partitions
+            )
+            self._n_partitions = self._partition.n_partitions
+
         fx, in_region = self._compute_energy(x)
         fx_val = fx.item()
 
@@ -449,6 +513,29 @@ class SAMC:
 
         # Initialize states — shape (N, dim)
         x = x0.to(device).clone()
+
+        # Auto-range: run a short MH warmup on first chain to discover energy range
+        if self._auto_range:
+            warmup_energies = []
+            x_warmup = x[0].clone()
+            fx_warmup, _ = self._compute_energy(x_warmup)
+            warmup_energies.append(fx_warmup.item())
+            for _ in range(2000):
+                x_new = self._proposal.propose(x_warmup)
+                fy, in_reg = self._compute_energy(x_new)
+                log_r = (-fy.item() + fx_warmup.item()) / self._temperature
+                if in_reg and (log_r > 0 or torch.rand(1).item() < math.exp(min(log_r, 0))):
+                    x_warmup = x_new
+                    fx_warmup = fy
+                warmup_energies.append(fx_warmup.item())
+            e_min_auto = min(warmup_energies)
+            e_max_auto = max(warmup_energies)
+            margin = max(0.1 * (e_max_auto - e_min_auto), 0.5)
+            self._partition = UniformPartition(
+                e_min_auto - margin, e_max_auto + margin, self._auto_n_partitions
+            )
+            self._n_partitions = self._partition.n_partitions
+
         fx, in_region = self._compute_energy_batch(x)  # (N,), (N,)
 
         # Warn if any initial state is out of partition range
