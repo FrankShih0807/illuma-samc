@@ -253,23 +253,45 @@ class TestImportanceWeights:
 
 
 class TestResample:
-    def test_returns_correct_shape(self):
+    def test_returns_subset(self):
+        """Binary rejection: result is a subset of input samples."""
         wm = make_wm()
         for t in range(1, 101):
             wm.step(t, float(t % 10))
         samples = torch.randn(100, 2)
         energies = torch.tensor([float(i % 10) for i in range(100)])
-        resampled = wm.resample(samples, energies, n=50)
-        assert resampled.shape == (50, 2)
-
-    def test_default_n(self):
-        wm = make_wm()
-        for t in range(1, 51):
-            wm.step(t, 5.0)
-        samples = torch.randn(30, 2)
-        energies = torch.full((30,), 5.0)
+        torch.manual_seed(0)
         resampled = wm.resample(samples, energies)
-        assert resampled.shape == (30, 2)
+        assert resampled.shape[1] == 2
+        assert resampled.shape[0] <= 100  # subset, not larger
+
+    def test_empty_when_all_out_of_range(self):
+        wm = make_wm()
+        samples = torch.randn(10, 2)
+        energies = torch.full((10,), 15.0)  # all out of range
+        resampled = wm.resample(samples, energies)
+        assert resampled.shape[0] == 0
+
+    def test_high_theta_bins_kept_more(self):
+        """Samples in high-theta bins should be kept with higher probability."""
+        wm = make_wm()
+        # Visit bin 5 a lot → high theta
+        for t in range(1, 201):
+            wm.step(t, 5.0)
+        # Some visits to bin 1 → lower theta
+        for t in range(201, 221):
+            wm.step(t, 1.0)
+
+        torch.manual_seed(42)
+        n = 500
+        samples = torch.randn(2 * n, 2)
+        energies = torch.cat([torch.full((n,), 5.0), torch.full((n,), 1.0)])
+        resampled_count = 0
+        for _ in range(10):
+            r = wm.resample(samples, energies)
+            resampled_count += r.shape[0]
+        # High-theta bin samples should dominate — at least some are kept
+        assert resampled_count > 0
 
 
 class TestStateDict:

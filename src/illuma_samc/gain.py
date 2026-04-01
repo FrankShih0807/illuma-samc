@@ -87,9 +87,7 @@ class GainSequence:
             self._warmup = warmup
             self._step_scale = step_scale
         else:
-            raise ValueError(
-                f"Unknown schedule {schedule!r}. Use '1/t', 'ramp', or a callable."
-            )
+            raise ValueError(f"Unknown schedule {schedule!r}. Use '1/t', 'ramp', or a callable.")
 
     def __call__(self, t: int) -> float:
         """Return the gain value at iteration *t* (1-indexed)."""

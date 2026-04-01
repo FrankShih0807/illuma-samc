@@ -240,12 +240,12 @@ class SAMCWeights:
         self,
         samples: torch.Tensor,
         energies: torch.Tensor,
-        n: int | None = None,
     ) -> torch.Tensor:
-        """Resample from the flat SAMC samples to recover the target distribution.
+        """Resample from flat SAMC samples to recover the target distribution.
 
-        Uses importance weights ``exp(theta[k]) / max(exp(theta))`` to
-        resample with replacement via multinomial sampling.
+        For each sample in bin *k*, keep it with probability
+        ``exp(theta[k]) / max(exp(theta))``, discard otherwise.
+        The kept samples are unweighted draws from the target.
 
         Parameters
         ----------
@@ -253,21 +253,25 @@ class SAMCWeights:
             Collected samples, shape ``(n_samples, dim)``.
         energies : Tensor
             1-D tensor of energies for each sample.
-        n : int, optional
-            Number of resampled points. Defaults to ``len(samples)``.
 
         Returns
         -------
         Tensor
-            Resampled points from the target distribution.
+            Subset of samples drawn from the target distribution.
         """
-        if n is None:
-            n = len(samples)
-        weights = self.importance_weights(energies)
-        if (weights == 0).all():
-            return samples[:n].clone()
-        idx = torch.multinomial(weights, n, replacement=True)
-        return samples[idx]
+        log_w = self.importance_log_weights(energies)
+        valid = log_w > float("-inf")
+        if not valid.any():
+            return samples[:0].clone()  # empty
+
+        # p_i = exp(theta[k_i]) / max(exp(theta)) = exp(theta[k_i] - max(theta))
+        log_w_shifted = log_w.clone()
+        log_w_shifted[~valid] = float("-inf")
+        log_w_shifted = log_w_shifted - log_w[valid].max()
+        p = torch.exp(log_w_shifted)
+
+        keep = torch.rand(len(samples)) < p
+        return samples[keep]
 
     # ------------------------------------------------------------------
     # Serialization
