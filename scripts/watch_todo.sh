@@ -59,11 +59,10 @@ launch_claude() {
 
     # Pull latest and apply migrations before starting
     git pull --rebase origin main 2>/dev/null || true
-    source "$(conda info --base 2>/dev/null)/etc/profile.d/conda.sh" 2>/dev/null && conda activate illuma-web 2>/dev/null
-    alembic upgrade head 2>/dev/null || true
+    source "$(conda info --base 2>/dev/null)/etc/profile.d/conda.sh" 2>/dev/null && conda activate illuma-samc 2>/dev/null
 
     claude --allowedTools "Bash,Edit,Read,Write,Glob,Grep" \
-        -p "Work through TODO.md steps IN ORDER. Do not skip ahead — if a step has unchecked items, complete ALL of them before moving to the next step. For each task: implement it, run 'alembic upgrade head' after any model changes, test it, follow the checkpoint protocol in CLAUDE.md. Stop if you hit something that needs user input." \
+        -p "You are an L3 Worker. Read ../AGENT_PLAYBOOK.md Section 5 for your start/end checklists. Read CLAUDE.md and WORKLOG.md (last 3 entries). Work through TODO.md IN ORDER — complete all items in a step before moving on. If stuck, create BLOCKED.md." \
         >> "$LOG_FILE" 2>&1 &
 
     local child_pid=$!
