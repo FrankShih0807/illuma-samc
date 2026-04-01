@@ -178,9 +178,10 @@ class SAMCWeights:
     ) -> torch.Tensor:
         r"""Per-sample importance log-weights for reweighting to the target.
 
-        SAMC samples from a flattened distribution. To recover expectations
-        under the true (Boltzmann) target, weight each sample by
-        :math:`\exp(-\theta[k_i])` (unnormalized).
+        SAMC samples from a flattened distribution proportional to
+        :math:`\exp(-E(x)/T - \theta[k(x)])`. To recover the original
+        target :math:`\exp(-E(x)/T)`, weight each sample by
+        :math:`\exp(\theta[k_i])`.
 
         Parameters
         ----------
@@ -197,18 +198,24 @@ class SAMCWeights:
         for i, e in enumerate(energies):
             k = self.partition.assign(e)
             if k >= 0 and self.counts[k] > 0:
-                log_w[i] = -self.theta[k].item()
+                log_w[i] = self.theta[k].item()
         return log_w
 
     def importance_weights(
         self,
         energies: torch.Tensor,
     ) -> torch.Tensor:
-        """Normalized importance weights that sum to 1.
+        """Normalized importance weights for reweighting to the target.
 
-        Use these to compute expectations under the target distribution::
+        Returns ``exp(theta[k]) / max(exp(theta))`` per sample, then
+        normalized to sum to 1. Use for resampling or weighted expectations::
 
+            # Weighted expectation
             weighted_mean = (weights * values).sum()
+
+            # Resample to get unweighted target samples
+            idx = torch.multinomial(weights, n, replacement=True)
+            target_samples = flat_samples[idx]
 
         Parameters
         ----------
@@ -224,10 +231,43 @@ class SAMCWeights:
         log_w = self.importance_log_weights(energies)
         if (log_w == float("-inf")).all():
             return torch.zeros_like(log_w)
-        # Stable softmax-style normalization
+        # Stable: subtract max before exp
         log_w_shifted = log_w - log_w[log_w > float("-inf")].max()
         w = torch.exp(log_w_shifted)
         return w / w.sum()
+
+    def resample(
+        self,
+        samples: torch.Tensor,
+        energies: torch.Tensor,
+        n: int | None = None,
+    ) -> torch.Tensor:
+        """Resample from the flat SAMC samples to recover the target distribution.
+
+        Uses importance weights ``exp(theta[k]) / max(exp(theta))`` to
+        resample with replacement via multinomial sampling.
+
+        Parameters
+        ----------
+        samples : Tensor
+            Collected samples, shape ``(n_samples, dim)``.
+        energies : Tensor
+            1-D tensor of energies for each sample.
+        n : int, optional
+            Number of resampled points. Defaults to ``len(samples)``.
+
+        Returns
+        -------
+        Tensor
+            Resampled points from the target distribution.
+        """
+        if n is None:
+            n = len(samples)
+        weights = self.importance_weights(energies)
+        if (weights == 0).all():
+            return samples[:n].clone()
+        idx = torch.multinomial(weights, n, replacement=True)
+        return samples[idx]
 
     # ------------------------------------------------------------------
     # Serialization

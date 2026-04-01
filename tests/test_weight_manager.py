@@ -204,6 +204,19 @@ class TestImportanceWeights:
         w = wm.importance_weights(energies)
         assert abs(w.sum().item() - 1.0) < 1e-10
 
+    def test_weight_is_exp_theta(self):
+        """Importance weight should be proportional to exp(theta[k])."""
+        wm = make_wm()
+        # Visit bin 5 a lot (high theta) and bin 1 a little (low theta)
+        for t in range(1, 101):
+            wm.step(t, 5.0)
+        for t in range(101, 111):
+            wm.step(t, 1.0)
+        energies = torch.tensor([5.0, 1.0])
+        w = wm.importance_weights(energies)
+        # Bin 5 has higher theta → higher weight
+        assert w[0] > w[1]
+
     def test_out_of_range_gets_zero(self):
         wm = make_wm()
         for t in range(1, 51):
@@ -228,13 +241,35 @@ class TestImportanceWeights:
         w = wm.importance_weights(energies)
         assert (w == 0).all()
 
-    def test_log_weights_shape(self):
+    def test_log_weights_are_theta(self):
+        """Log importance weights should be theta[k], not -theta[k]."""
         wm = make_wm()
         for t in range(1, 51):
             wm.step(t, 5.0)
-        energies = torch.tensor([5.0, 3.0])
+        k = wm.partition.assign(torch.tensor(5.0))
+        energies = torch.tensor([5.0])
         lw = wm.importance_log_weights(energies)
-        assert lw.shape == (2,)
+        assert abs(lw[0].item() - wm.theta[k].item()) < 1e-12
+
+
+class TestResample:
+    def test_returns_correct_shape(self):
+        wm = make_wm()
+        for t in range(1, 101):
+            wm.step(t, float(t % 10))
+        samples = torch.randn(100, 2)
+        energies = torch.tensor([float(i % 10) for i in range(100)])
+        resampled = wm.resample(samples, energies, n=50)
+        assert resampled.shape == (50, 2)
+
+    def test_default_n(self):
+        wm = make_wm()
+        for t in range(1, 51):
+            wm.step(t, 5.0)
+        samples = torch.randn(30, 2)
+        energies = torch.full((30,), 5.0)
+        resampled = wm.resample(samples, energies)
+        assert resampled.shape == (30, 2)
 
 
 class TestStateDict:
