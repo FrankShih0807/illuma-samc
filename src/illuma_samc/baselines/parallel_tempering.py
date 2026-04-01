@@ -18,6 +18,7 @@ def run_parallel_tempering(
     swap_interval: int = 10,
     burn_in: int = 0,
     save_every: int = 1,
+    init_scale: float = 1.0,
 ) -> dict:
     """Parallel tempering with geometric temperature ladder.
 
@@ -26,7 +27,7 @@ def run_parallel_tempering(
     temps = torch.logspace(math.log10(t_min), math.log10(t_max), n_replicas)
 
     # Initialize replicas
-    states = [torch.zeros(dim) for _ in range(n_replicas)]
+    states = [init_scale * torch.randn(dim) for _ in range(n_replicas)]
     energies_list: list[list[float]] = [[] for _ in range(n_replicas)]
 
     # Compute initial energies

@@ -244,34 +244,34 @@ For UX improvements and input validation, the same pipeline applies:
 ### Step 25: Rosenbrock 2D Ablations (3C) — cheap, different geometry
 > Apply 2D heuristics as starting defaults. Narrower sweeps guided by Step 24 insights.
 
-- [ ] Set Rosenbrock defaults from 2D insights
-- [ ] Run narrowed sweeps on most impactful params (guided by 2D sensitivity ranking)
-- [ ] **Deliverable**: `ablation/reports/rosenbrock_insights.md` — validate/refine heuristics, note where narrow valley breaks assumptions
+- [x] Set Rosenbrock defaults from 2D insights
+- [x] Run narrowed sweeps on most impactful params (guided by 2D sensitivity ranking)
+- [x] **Deliverable**: `ablation/reports/rosenbrock_insights.md` — validate/refine heuristics, note where narrow valley breaks assumptions
 
 ### Step 26: 10D Gaussian Mixture Ablations (3D) — dimensionality scaling
 > Focus on params that mattered in 2D. Add scaling-specific questions.
 
-- [ ] Apply refined heuristics to set 10D defaults
-- [ ] Sweep only high-impact params from 2D analysis
-- [ ] Test scaling questions: does n_bins scale with dim? does proposal_std ~ 1/sqrt(dim)?
-- [ ] **Deliverable**: `ablation/reports/10d_insights.md` — scaling rules, dimensionality-specific heuristics
+- [x] Apply refined heuristics to set 10D defaults
+- [x] Sweep only high-impact params from 2D analysis
+- [x] Test scaling questions: does n_bins scale with dim? does proposal_std ~ 1/sqrt(dim)?
+- [x] **Deliverable**: `ablation/reports/10d_insights.md` — scaling rules, dimensionality-specific heuristics
 
 ### Step 27: Rastrigin 20D Ablations (3E) — hardest, minimal sweeps
 > Apply all accumulated heuristics. Only sweep 2-3 most impactful params.
 
-- [ ] Apply all heuristics to set Rastrigin defaults
-- [ ] Focus: can SAMC find global min? How many chains needed? Does gain schedule matter at this scale?
-- [ ] **Deliverable**: `ablation/reports/rastrigin_insights.md` — limits of SAMC, where it breaks down
+- [x] Apply all heuristics to set Rastrigin defaults
+- [x] Focus: can SAMC find global min? How many chains needed? Does gain schedule matter at this scale?
+- [x] **Deliverable**: `ablation/reports/rastrigin_insights.md` — limits of SAMC, where it breaks down
 
 ### Step 28: Cross-Algorithm Comparison (3F)
-- [ ] Best config per algo per problem (from ablation results), 10 seeds for tight error bars
-- [ ] Figure 1: Algo comparison at best hyperparams (bar chart with error bars)
-- [ ] Figure 2: Scaling with dimensionality (2D → 10D → 20D)
-- [ ] Figure 3: Robustness to proposal_std (SAMC vs MH overlay)
-- [ ] Figure 4: SAMC gain schedule convergence curves
-- [ ] Figure 5: Compute efficiency Pareto front (energy evals vs best energy)
-- [ ] Summary table for README: problem x algo x metrics
-- [ ] **Deliverable**: `ablation/reports/final_comparison.md` + all figures in `ablation/figures/`
+- [x] Best config per algo per problem (from ablation results), 10 seeds for tight error bars
+- [x] Figure 1: Algo comparison at best hyperparams (bar chart with error bars)
+- [x] Figure 2: Scaling with dimensionality (2D → 10D → 20D)
+- [x] Figure 3: Robustness to proposal_std (SAMC vs MH overlay)
+- [x] Figure 4: SAMC gain schedule convergence curves
+- [x] Figure 5: Compute efficiency Pareto front (energy evals vs best energy)
+- [x] Summary table for README: problem x algo x metrics
+- [x] **Deliverable**: `ablation/reports/final_comparison.md` + all figures in `ablation/figures/`
 
 ### Step 29: Production Hardening (after ablation insights)
 > Informed by ablation results — implement the features that actually matter.

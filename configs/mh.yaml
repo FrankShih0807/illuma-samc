@@ -29,3 +29,4 @@ rastrigin:
   burn_in_frac: 0.1
   save_every: 100
   seed: 42
+  init_scale: 2.0

@@ -1,5 +1,21 @@
 # illuma-samc Work Log
 
+## [2026-04-01] Phase 3: Ablation Study Steps 25-28
+- **Phase:** generalizing
+- **Status:** done
+- **Summary:**
+  - Step 25: Ran 78 Rosenbrock 2D ablation runs. Key finding: independent multi-chain beats shared weights on unimodal problems; gain_t0=5000 critical.
+  - Step 26: Ran 72 10D Gaussian Mixture ablation runs. Key finding: shared 8-chain SAMC best (E=0.280); proposal_std scales with problem not dimension; n_bins does NOT scale with dim.
+  - Step 27: Ran 45 Rastrigin 20D ablation runs. Fixed random initialization (was starting at global min). Key finding: SAMC 16-chain (E=82.4) beats PT (E=92.5) and MH (E=106.8) on hardest problem.
+  - Step 28: Ran 90 cross-comparison runs (3 algos x 3 problems x 10 seeds). Generated 5 comparison figures and final report.
+- **Decisions made:**
+  - Changed initialization from `torch.zeros` to `torch.randn * init_scale` in all runners (SAMC, MH, PT) to avoid starting at global minimum on Rastrigin.
+  - Added `init_scale` parameter to train.py CLI, YAML configs, and PT/MH baselines.
+  - Fixed `compute_energy_mixing` early return missing `n_round_trips` key.
+  - Increased Rastrigin e_max from 200 to 500 to capture random initialization energy.
+- **Blocked on:** Nothing.
+- **Affects:** None.
+
 ## [2026-04-01] Phase 5: Robust Energy Bin Selection (Steps 39-42)
 - **Phase:** prototyping
 - **Status:** done

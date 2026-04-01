@@ -23,7 +23,7 @@ def _run_single_mh(
     save_every: int,
 ) -> dict:
     """Run a single MH chain. Internal helper."""
-    x = x0.clone() if x0 is not None else torch.zeros(dim)
+    x = x0.clone() if x0 is not None else torch.randn(dim)
     result = energy_fn(x)
     if isinstance(result, tuple):
         fx, _ = result

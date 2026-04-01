@@ -105,11 +105,11 @@ def _eval_energy(energy_fn, x):
     return float(result), True
 
 
-def _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature):
+def _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature, init_scale=1.0):
     """Run one MH+SAMCWeights chain. Returns dict."""
     import math
 
-    x = torch.zeros(dim)
+    x = init_scale * torch.randn(dim)
     fx, _ = _eval_energy(energy_fn, x)
     best_x, best_e = x.clone(), fx
     accept_count = 0
@@ -139,11 +139,13 @@ def _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature):
     }
 
 
-def _run_shared_samc_chains(energy_fn, dim, n_iters, n_chains, wm, proposal_std, temperature):
+def _run_shared_samc_chains(
+    energy_fn, dim, n_iters, n_chains, wm, proposal_std, temperature, init_scale=1.0
+):
     """Run N chains with a shared SAMCWeights, interleaved step-by-step."""
     import math
 
-    xs = [torch.zeros(dim) for _ in range(n_chains)]
+    xs = [init_scale * torch.randn(dim) for _ in range(n_chains)]
     fxs = []
     for x in xs:
         fx, _ = _eval_energy(energy_fn, x)
@@ -199,6 +201,7 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     n_chains = cfg.get("n_chains", 1)
     shared_weights = cfg.get("shared_weights", True)
     auto_range = cfg.get("auto_range", False)
+    init_scale = cfg.get("init_scale", 1.0)
 
     gain_schedule = cfg.get("gain", "ramp")
 
@@ -243,7 +246,9 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         wm = SAMCWeights(partition=partition, gain=gain)
 
     if n_chains <= 1:
-        result = _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature)
+        result = _run_samc_chain(
+            energy_fn, dim, n_iters, wm, proposal_std, temperature, init_scale=init_scale
+        )
         wall_time = time.perf_counter() - t0
         mixing = compute_energy_mixing(result["energies"])
         return {
@@ -266,7 +271,14 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         # Shared weights: all chains update the same SAMCWeights interleaved
         # wm is already built above (from auto_range or _build_partition)
         result = _run_shared_samc_chains(
-            energy_fn, dim, n_iters, n_chains, wm, proposal_std, temperature
+            energy_fn,
+            dim,
+            n_iters,
+            n_chains,
+            wm,
+            proposal_std,
+            temperature,
+            init_scale=init_scale,
         )
         wall_time = time.perf_counter() - t0
         mixing = compute_energy_mixing(result["energies"])
@@ -313,7 +325,15 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
                     )
                 g = GainSequence(gain_schedule, **gain_kwargs)
                 chain_wm = SAMCWeights(partition=p, gain=g)
-            chain = _run_samc_chain(energy_fn, dim, n_iters, chain_wm, proposal_std, temperature)
+            chain = _run_samc_chain(
+                energy_fn,
+                dim,
+                n_iters,
+                chain_wm,
+                proposal_std,
+                temperature,
+                init_scale=init_scale,
+            )
             chains.append(chain)
             wms.append(chain_wm)
         wall_time = time.perf_counter() - t0
@@ -347,9 +367,12 @@ def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     burn_in_frac = cfg.get("burn_in_frac", 0.1)
     burn_in = int(n_iters * burn_in_frac)
     n_chains = cfg.get("n_chains", 1)
+    init_scale = cfg.get("init_scale", 1.0)
 
     seed = cfg.get("seed", 42)
     torch.manual_seed(seed)
+
+    x0 = init_scale * torch.randn(dim)
 
     t0 = time.perf_counter()
     mh_result = run_mh(
@@ -358,6 +381,7 @@ def run_mh_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         n_iters,
         proposal_std=cfg.get("proposal_std", 0.25),
         temperature=cfg.get("temperature", 1.0),
+        x0=x0,
         burn_in=burn_in,
         save_every=save_every,
         n_chains=n_chains,
@@ -382,6 +406,7 @@ def run_pt_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     save_every = cfg.get("save_every", 100)
     burn_in_frac = cfg.get("burn_in_frac", 0.1)
     burn_in = int(n_iters * burn_in_frac)
+    init_scale = cfg.get("init_scale", 1.0)
 
     seed = cfg.get("seed", 42)
     torch.manual_seed(seed)
@@ -398,6 +423,7 @@ def run_pt_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         swap_interval=cfg.get("swap_interval", 10),
         burn_in=burn_in,
         save_every=save_every,
+        init_scale=init_scale,
     )
     wall_time = time.perf_counter() - t0
 
@@ -487,6 +513,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save_every", type=int, default=None, help="Sample collection frequency")
     parser.add_argument("--burn_in_frac", type=float, default=None, help="Burn-in fraction")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
+    parser.add_argument(
+        "--init_scale",
+        type=float,
+        default=None,
+        help="Scale for random initialization (default: 1.0)",
+    )
     parser.add_argument(
         "--output_dir",
         type=str,

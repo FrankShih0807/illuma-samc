@@ -34,10 +34,11 @@ rosenbrock:
 rastrigin:
   n_partitions: 40
   e_min: 0.0
-  e_max: 200.0
+  e_max: 500.0
   proposal_std: 0.5
   n_iters: 500000
   gain: ramp
   gain_kwargs: {rho: 1.0, tau: 1.0, warmup: 1, step_scale: 1000}
   save_every: 100
   seed: 42
+  init_scale: 2.0
