@@ -329,39 +329,31 @@ For UX improvements and input validation, the same pipeline applies:
 - [ ] Generate API docs with Sphinx, host on ReadTheDocs
 - [ ] Add `SAMCWeights.from_config(yaml_path)` or `SAMCConfig` dataclass to reduce partition+gain boilerplate
 
-## Phase 5: Robust Bin Selection
+## Phase 5: Robust Energy Bin Selection
 
-> Energy range (e_min/e_max) is the #1 SAMC failure mode. These three approaches aim to make SAMCWeights robust to bin selection. Implement all three, ablate, and pick the best.
+> Energy range (e_min/e_max) is SAMC's #1 failure mode — wrong range = dead sampler.
+> Three approaches to make SAMC robust, then ablate them.
 
-### Step 39: Overflow Bins (defensive safety net)
-- [ ] Add overflow bins to UniformPartition: catch-all bins at `[-inf, e_min]` and `[e_max, +inf]`
-- [ ] Out-of-range energies get assigned to overflow bins instead of being clamped/ignored
-- [ ] Theta vector grows by 2 (one bin each side), existing weights unaffected
-- [ ] Update `assign()`, `assign_batch()`, `edges`, `n_bins` to handle overflow bins
-- [ ] Backward-compatible: add `overflow_bins=False` param, default off for existing code
-- [ ] Add tests: energies outside range assigned to correct overflow bin, weights update correctly
-- [ ] Integrate with SAMCWeights — verify correction() and step() work with overflow bins
+### Step 39: Overflow Bins
+- [x] Add `overflow_bins=False` parameter to `UniformPartition` (backward-compatible)
+- [x] Two catch-all bins: `[-inf, e_min]` (bin 0) and `[e_max, +inf]` (last bin)
+- [x] Update `assign()`, `assign_batch()`, `edges`, `n_partitions`
+- [x] SAMCWeights works with overflow bins
+- [x] Tests in `tests/test_partitions.py`
 
-### Step 40: Auto-Range Warmup (eliminate the #1 pain point)
-- [ ] Add `SAMCWeights.from_warmup(energy_fn, dim, n_bins=42, warmup_steps=5000, margin=0.1)` classmethod
-- [ ] Runs N warmup MH steps (no weight correction) to collect energy statistics
-- [ ] Sets `e_min = min(energies) - margin * range`, `e_max = max(energies) + margin * range`
-- [ ] Returns a fully initialized SAMCWeights ready to use
-- [ ] User can still override e_min/e_max if they know better
-- [ ] Add tests: verify auto-range covers observed energies, verify resulting SAMCWeights works end-to-end
+### Step 40: Auto-Range Warmup
+- [x] Add `SAMCWeights.from_warmup()` classmethod
+- [x] Runs warmup MH steps with no weight correction to estimate energy range
+- [x] Sets e_min/e_max from observed min/max with margin
+- [x] Tests in `tests/test_weight_manager.py`
 
-### Step 41: Dynamic Bin Expansion (never breaks, adapts to any landscape)
-- [ ] Add `ExpandablePartition` (extends UniformPartition) that can grow its range on the fly
-- [ ] When energy falls outside [e_min, e_max], add new bins to cover it
-- [ ] Extend theta vector with zeros (neutral weight) for new bins, preserve existing weights
-- [ ] Configurable: `expand_step` (how much to grow per expansion), `max_bins` (cap to prevent unbounded growth)
-- [ ] Update SAMCWeights to handle partition size changes mid-run (theta resize, counts resize, history resize)
-- [ ] Add tests: expansion triggered correctly, theta preserved, flatness still converges
+### Step 41: Dynamic Bin Expansion
+- [x] Add `ExpandablePartition` in `partitions.py`
+- [x] Extends range when out-of-range energy arrives, up to `max_bins`
+- [x] `SAMCWeights._resize_for_partition()` handles theta/counts resize
+- [x] Tests in `tests/test_partitions.py`
 
-### Step 42: Robust Bin Selection Ablation
-- [ ] Run all three approaches on 2D, Rosenbrock, 10D, Rastrigin with deliberately wrong energy ranges
-- [ ] Test scenarios: e_max too tight, e_max too wide, e_min too high, completely wrong range
-- [ ] Compare: best energy, flatness, acceptance rate, recovery behavior
-- [ ] Baseline: current uniform partition (no robustness) with correct and wrong ranges
-- [ ] Deliverable: `ablation/reports/robust_bins_insights.md` — which approach handles misspecification best
-- [ ] Recommendation: default configuration for SAMCWeights going forward
+### Step 42: Ablation — Robust Bins
+- [x] Add `--overflow_bins`, `--auto_range`, `--expandable` flags to `train.py`
+- [x] Run ablations on all 4 problems x 5 scenarios x 4 methods x 3 seeds (240 runs)
+- [x] Write analysis to `ablation/reports/robust_bins_insights.md`

@@ -25,7 +25,7 @@ import yaml
 from illuma_samc import GainSequence, SAMCWeights, UniformPartition
 from illuma_samc.analysis import compute_energy_mixing
 from illuma_samc.baselines import run_mh, run_parallel_tempering
-from illuma_samc.partitions import AdaptivePartition, QuantilePartition
+from illuma_samc.partitions import AdaptivePartition, ExpandablePartition, QuantilePartition
 from illuma_samc.problems import PROBLEMS
 
 # ────────────────────────────────────────────────────────
@@ -72,7 +72,13 @@ def _build_partition(energy_fn, dim: int, cfg: dict):
     n_partitions = cfg.get("n_partitions", 42)
     e_min = cfg.get("e_min", -8.2)
     e_max = cfg.get("e_max", 0.0)
-    if ptype == "adaptive":
+    overflow_bins = cfg.get("overflow_bins", False)
+
+    if cfg.get("expandable", False):
+        return ExpandablePartition(
+            e_min=e_min, e_max=e_max, n_bins=n_partitions, expand_step=5, max_bins=200
+        )
+    elif ptype == "adaptive":
         return AdaptivePartition(n_bins=n_partitions, e_min=e_min, e_max=e_max)
     elif ptype == "quantile":
         # QuantilePartition needs warmup energies — evaluate random samples
@@ -81,6 +87,8 @@ def _build_partition(energy_fn, dim: int, cfg: dict):
         raw = energy_fn(warmup_x)
         energies = raw[0] if isinstance(raw, tuple) else raw
         return QuantilePartition(energies=energies, n_bins=n_partitions)
+    elif overflow_bins:
+        return UniformPartition(e_min=e_min, e_max=e_max, n_bins=n_partitions, overflow_bins=True)
     # uniform — return None so SAMC uses its default UniformPartition
     return None
 
@@ -186,24 +194,42 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
     seed = cfg.get("seed", 42)
     torch.manual_seed(seed)
 
-    partition = _build_partition(energy_fn, dim, cfg)
-    if partition is None:
-        partition = UniformPartition(
-            e_min=cfg.get("e_min", -8.2),
-            e_max=cfg.get("e_max", 0.0),
-            n_bins=cfg.get("n_partitions", 42),
-        )
-    gain_schedule = cfg.get("gain", "ramp")
-    gain = GainSequence(gain_schedule, **gain_kwargs)
     proposal_std = cfg.get("proposal_std", 0.25)
     temperature = cfg.get("temperature", 1.0)
     n_chains = cfg.get("n_chains", 1)
     shared_weights = cfg.get("shared_weights", True)
+    auto_range = cfg.get("auto_range", False)
+
+    gain_schedule = cfg.get("gain", "ramp")
 
     t0 = time.perf_counter()
 
-    if n_chains <= 1:
+    if auto_range:
+        # Use from_warmup to auto-detect energy range
+        overflow_bins = cfg.get("overflow_bins", False)
+        wm = SAMCWeights.from_warmup(
+            energy_fn,
+            dim=dim,
+            n_bins=cfg.get("n_partitions", 42),
+            warmup_steps=cfg.get("warmup_steps", 5000),
+            proposal_std=proposal_std,
+            margin=cfg.get("margin", 0.1),
+            gain=gain_schedule,
+            gain_kwargs=gain_kwargs,
+            overflow_bins=overflow_bins,
+        )
+    else:
+        partition = _build_partition(energy_fn, dim, cfg)
+        if partition is None:
+            partition = UniformPartition(
+                e_min=cfg.get("e_min", -8.2),
+                e_max=cfg.get("e_max", 0.0),
+                n_bins=cfg.get("n_partitions", 42),
+            )
+        gain = GainSequence(gain_schedule, **gain_kwargs)
         wm = SAMCWeights(partition=partition, gain=gain)
+
+    if n_chains <= 1:
         result = _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature)
         wall_time = time.perf_counter() - t0
         mixing = compute_energy_mixing(result["energies"])
@@ -225,7 +251,7 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         }
     elif shared_weights:
         # Shared weights: all chains update the same SAMCWeights interleaved
-        wm = SAMCWeights(partition=partition, gain=gain)
+        # wm is already built above (from auto_range or _build_partition)
         result = _run_shared_samc_chains(
             energy_fn, dim, n_iters, n_chains, wm, proposal_std, temperature
         )
@@ -252,16 +278,31 @@ def run_samc_experiment(energy_fn, dim: int, cfg: dict) -> dict:
         chains = []
         wms = []
         for _c in range(n_chains):
-            p = UniformPartition(
-                e_min=cfg.get("e_min", -8.2),
-                e_max=cfg.get("e_max", 0.0),
-                n_bins=cfg.get("n_partitions", 42),
-            )
-            g = GainSequence(gain_schedule, **gain_kwargs)
-            wm = SAMCWeights(partition=p, gain=g)
-            chain = _run_samc_chain(energy_fn, dim, n_iters, wm, proposal_std, temperature)
+            if auto_range:
+                chain_wm = SAMCWeights.from_warmup(
+                    energy_fn,
+                    dim=dim,
+                    n_bins=cfg.get("n_partitions", 42),
+                    warmup_steps=cfg.get("warmup_steps", 5000),
+                    proposal_std=proposal_std,
+                    margin=cfg.get("margin", 0.1),
+                    gain=gain_schedule,
+                    gain_kwargs=gain_kwargs,
+                    overflow_bins=cfg.get("overflow_bins", False),
+                )
+            else:
+                p = _build_partition(energy_fn, dim, cfg)
+                if p is None:
+                    p = UniformPartition(
+                        e_min=cfg.get("e_min", -8.2),
+                        e_max=cfg.get("e_max", 0.0),
+                        n_bins=cfg.get("n_partitions", 42),
+                    )
+                g = GainSequence(gain_schedule, **gain_kwargs)
+                chain_wm = SAMCWeights(partition=p, gain=g)
+            chain = _run_samc_chain(energy_fn, dim, n_iters, chain_wm, proposal_std, temperature)
             chains.append(chain)
-            wms.append(wm)
+            wms.append(chain_wm)
         wall_time = time.perf_counter() - t0
 
         best_idx = min(range(n_chains), key=lambda i: chains[i]["best_energy"])
@@ -465,6 +506,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--plot_energy",
         action="store_true",
         help="Show energy vs iteration plot after the run",
+    )
+    parser.add_argument(
+        "--overflow_bins",
+        action="store_true",
+        default=False,
+        help="Enable overflow bins on UniformPartition (SAMC)",
+    )
+    parser.add_argument(
+        "--auto_range",
+        action="store_true",
+        default=False,
+        help="Auto-detect energy range via warmup (SAMC, uses SAMCWeights.from_warmup)",
+    )
+    parser.add_argument(
+        "--expandable",
+        action="store_true",
+        default=False,
+        help="Use ExpandablePartition for dynamic bin expansion (SAMC)",
     )
     return parser
 

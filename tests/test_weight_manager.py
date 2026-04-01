@@ -474,3 +474,90 @@ class TestPlotDiagnostics:
             wm.step(t, 5.0)
         fig = wm.plot_diagnostics()
         assert fig is not None
+
+
+class TestFromWarmup:
+    def test_basic_auto_range(self):
+        """from_warmup should detect a reasonable energy range."""
+
+        def energy_fn(x):
+            return (x**2).sum()
+
+        torch.manual_seed(42)
+        wm = SAMCWeights.from_warmup(energy_fn, dim=2, n_bins=20, warmup_steps=500)
+        assert wm.n_bins == 20
+        # Partition should have a reasonable range (quadratic on dim=2)
+        edges = wm.partition.edges
+        assert edges[0].item() < 5.0  # should include low energies
+        assert edges[-1].item() > 0.0
+
+    def test_with_overflow_bins(self):
+        def energy_fn(x):
+            return (x**2).sum()
+
+        torch.manual_seed(42)
+        wm = SAMCWeights.from_warmup(
+            energy_fn, dim=2, n_bins=20, warmup_steps=200, overflow_bins=True
+        )
+        assert wm.n_bins == 22  # 20 + 2 overflow
+
+    def test_with_tuple_energy_fn(self):
+        """from_warmup should handle energy functions returning (energy, in_region)."""
+
+        def energy_fn(x):
+            return (x**2).sum(), True
+
+        torch.manual_seed(42)
+        wm = SAMCWeights.from_warmup(energy_fn, dim=2, n_bins=10, warmup_steps=200)
+        assert wm.n_bins == 10
+
+    def test_custom_gain(self):
+        def energy_fn(x):
+            return (x**2).sum()
+
+        torch.manual_seed(42)
+        wm = SAMCWeights.from_warmup(
+            energy_fn, dim=2, n_bins=10, warmup_steps=100, gain="ramp", gain_kwargs={"rho": 1.0}
+        )
+        assert wm.n_bins == 10
+
+    def test_margin_expands_range(self):
+        """Larger margin should produce wider energy range."""
+
+        def energy_fn(x):
+            return (x**2).sum()
+
+        torch.manual_seed(42)
+        wm_narrow = SAMCWeights.from_warmup(
+            energy_fn, dim=2, n_bins=10, warmup_steps=500, margin=0.0
+        )
+        torch.manual_seed(42)
+        wm_wide = SAMCWeights.from_warmup(energy_fn, dim=2, n_bins=10, warmup_steps=500, margin=0.5)
+        narrow_range = wm_narrow.partition.edges[-1] - wm_narrow.partition.edges[0]
+        wide_range = wm_wide.partition.edges[-1] - wm_wide.partition.edges[0]
+        assert wide_range > narrow_range
+
+
+class TestResizeForPartition:
+    def test_expand(self):
+        wm = make_wm()
+        assert wm.theta.shape[0] == 10
+        # Simulate partition expanding
+        wm.partition = UniformPartition(e_min=0, e_max=15, n_bins=15)
+        wm._resize_for_partition()
+        assert wm.theta.shape[0] == 15
+        assert wm.counts.shape[0] == 15
+        # New bins should be zero
+        assert wm.theta[10:].sum().item() == 0.0
+
+    def test_shrink(self):
+        wm = make_wm()
+        wm.partition = UniformPartition(e_min=0, e_max=5, n_bins=5)
+        wm._resize_for_partition()
+        assert wm.theta.shape[0] == 5
+
+    def test_no_change(self):
+        wm = make_wm()
+        old_theta = wm.theta.clone()
+        wm._resize_for_partition()
+        assert torch.equal(wm.theta, old_theta)
