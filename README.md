@@ -69,6 +69,20 @@ wm = SAMCWeights(
 
 The benchmark plots below use `UniformPartition` with tuned ranges to show SAMC at its best.
 
+### `SAMCWeights` API
+
+| Method | Description |
+|--------|-------------|
+| `SAMCWeights(partition, gain)` | Constructor. Takes a `Partition` and `GainSequence`. |
+| `SAMCWeights.auto(bin_width=0.2)` | Zero-config factory. Bins grow automatically — no energy range needed. |
+| `SAMCWeights.from_warmup(energy_fn, dim)` | Runs a short MH warmup to discover the energy range, then creates fixed bins. |
+| `wm.correction(fx, fy) -> float` | SAMC weight correction to add to your log acceptance ratio. |
+| `wm.step(t, energy)` | Update weights after accept/reject. Call once per iteration. |
+| `wm.flatness() -> float` | Bin visit uniformity: 1.0 = perfectly flat, lower = uneven. |
+| `wm.importance_weights(energies)` | Normalized importance weights for resampling to target distribution. |
+| `wm.resample(samples, energies)` | Importance resampling — recover unweighted draws from the target. |
+| `wm.state_dict()` / `wm.load_state_dict(d)` | Checkpoint and restore weights for long runs. |
+
 ### The Payoff
 
 |                  |         MH |       SAMC |
@@ -150,6 +164,14 @@ GainSequence(lambda t: min(1.0, 1000 / t))  # any (int) -> float callable
 ## Multi-Chain SAMC
 
 Run multiple chains with shared weights for faster bin flattening:
+
+```python
+sampler = SAMC(energy_fn=energy_fn, dim=2, n_chains=4)
+result = sampler.run(n_steps=100_000)
+# result.samples has shape (4, n_saved, dim)
+```
+
+Or from the CLI:
 
 ```bash
 python train.py --algo samc --model 2d --n_chains 4                        # shared weights (default)

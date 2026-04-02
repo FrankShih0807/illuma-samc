@@ -139,6 +139,7 @@ class SAMC:
         energy_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
         *,
         dim: int,
+        n_chains: int = 1,
         n_partitions: int = 42,
         n_bins: int | None = None,
         e_min: float = _UNSET,
@@ -170,6 +171,8 @@ class SAMC:
         # --- Input validation ---
         if dim <= 0:
             raise ValueError("dim must be positive")
+        if n_chains <= 0:
+            raise ValueError("n_chains must be positive")
         if proposal_fn is None and proposal_std <= 0:
             raise ValueError("proposal_std must be positive")
         if partition_fn is None:
@@ -183,6 +186,7 @@ class SAMC:
 
         self._device = torch.device(device)
         self._dim = dim
+        self._n_chains = n_chains
         self._temperature = temperature
 
         # --- Energy function ---
@@ -236,8 +240,18 @@ class SAMC:
             energy, in_region = result
             if isinstance(in_region, torch.Tensor):
                 in_region = in_region.item()
-            return energy.squeeze(), bool(in_region)
-        return result.squeeze(), True
+            energy = energy.squeeze()
+        else:
+            energy = result.squeeze()
+            in_region = True
+        if energy.dim() > 0:
+            raise ValueError(
+                f"energy_fn returned a tensor with shape {tuple(energy.shape)}, "
+                f"but a scalar is expected for single-chain mode. "
+                f"If your energy_fn returns batched outputs, set n_chains > 1 "
+                f"at initialization: SAMC(energy_fn=..., dim=..., n_chains=N)"
+            )
+        return energy, bool(in_region)
 
     def _compute_energy_batch(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute energy for a batch of states.
@@ -282,7 +296,9 @@ class SAMC:
             Number of MCMC iterations.
         x0 : Tensor, optional
             Initial state. Shape ``(dim,)`` for single chain or ``(N, dim)``
-            for *N* parallel chains with shared weights.
+            for *N* parallel chains with shared weights.  When ``n_chains > 1``
+            and ``x0`` is omitted, a zero tensor of shape ``(n_chains, dim)``
+            is created automatically.
         save_every : int
             Store a sample every this many iterations.
         burn_in : int
@@ -303,7 +319,21 @@ class SAMC:
             raise ValueError("n_steps must be positive")
         if burn_in < 0:
             raise ValueError("burn_in must be non-negative")
-        if x0 is not None and x0.dim() == 2:
+
+        # Determine number of chains: explicit n_chains wins, then x0 shape
+        n_chains = self._n_chains
+        if x0 is not None and x0.dim() == 2 and n_chains == 1:
+            # Backward compat: infer multi-chain from 2D x0
+            n_chains = x0.shape[0]
+        if x0 is not None and x0.dim() == 2 and x0.shape[0] != n_chains:
+            raise ValueError(
+                f"x0 has {x0.shape[0]} chains but n_chains={n_chains}. "
+                f"Either match x0 shape or omit x0 to auto-initialize."
+            )
+        if n_chains > 1 and x0 is None:
+            x0 = torch.zeros(n_chains, self._dim, device=self._device)
+
+        if n_chains > 1:
             result = self._run_multi_chain(n_steps, x0, save_every=save_every, progress=progress)
         else:
             result = self._run_single_chain(n_steps, x0, save_every=save_every, progress=progress)
