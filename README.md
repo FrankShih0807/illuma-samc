@@ -41,7 +41,7 @@ If you already have a Metropolis-Hastings loop, add two lines to get SAMC:
 ```python
 from illuma_samc import SAMCWeights
 
-wm = SAMCWeights.auto(bin_width=0.2)                      # <- new
+wm = SAMCWeights()                                        # <- new
 
 for t in range(1, n_steps + 1):
     x_new = propose(x)
@@ -56,7 +56,7 @@ for t in range(1, n_steps + 1):
 
 Your loop stays yours. `SAMCWeights` just manages the bin weights that let SAMC overcome energy barriers. Bins grow automatically -- no energy range needed.
 
-**`auto()` is the recommended default** -- zero config, works on any problem. If you know your energy range, `UniformPartition` gives better bin flatness:
+If you know your energy range, pass a `UniformPartition` for better bin flatness:
 
 ```python
 from illuma_samc import SAMCWeights, UniformPartition, GainSequence
@@ -66,22 +66,6 @@ wm = SAMCWeights(
     gain=GainSequence("1/t", t0=1000),
 )
 ```
-
-The benchmark plots below use `UniformPartition` with tuned ranges to show SAMC at its best.
-
-### `SAMCWeights` API
-
-| Method | Description |
-|--------|-------------|
-| `SAMCWeights(partition, gain)` | Constructor. Takes a `Partition` and `GainSequence`. |
-| `SAMCWeights.auto(bin_width=0.2)` | Zero-config factory. Bins grow automatically — no energy range needed. |
-| `SAMCWeights.from_warmup(energy_fn, dim)` | Runs a short MH warmup to discover the energy range, then creates fixed bins. |
-| `wm.correction(fx, fy) -> float` | SAMC weight correction to add to your log acceptance ratio. |
-| `wm.step(t, energy)` | Update weights after accept/reject. Call once per iteration. |
-| `wm.flatness() -> float` | Bin visit uniformity: 1.0 = perfectly flat, lower = uneven. |
-| `wm.importance_weights(energies)` | Normalized importance weights for resampling to target distribution. |
-| `wm.resample(samples, energies)` | Importance resampling — recover unweighted draws from the target. |
-| `wm.state_dict()` / `wm.load_state_dict(d)` | Checkpoint and restore weights for long runs. |
 
 ### The Payoff
 
@@ -210,12 +194,7 @@ See `examples/mh_vs_samc.ipynb` for a side-by-side MH vs SAMC comparison.
 
 **Q: How do I choose `e_min` and `e_max`?**
 
-A: If you don't know your energy range, you have three options:
-- **`SAMCWeights.auto()`** -- bins grow on the fly, zero config.
-- **`SAMCWeights.from_warmup()`** -- runs a quick MH warmup to discover the range, then creates fixed bins.
-- **`SAMC(energy_fn=..., dim=...)`** -- omit `e_min`/`e_max` and the sampler auto-detects via warmup.
-
-If you know the range, explicit `UniformPartition` gives the best bin flatness.
+A: If you don't know your energy range, just use the defaults -- `SAMCWeights()` grows bins on the fly. `SAMCWeights.from_warmup(energy_fn, dim)` runs a quick MH warmup to discover the range, then creates fixed bins. For `SAMC`, omit `e_min`/`e_max` and it auto-detects via warmup. If you know the range, pass `partition=UniformPartition(...)` for the best bin flatness.
 
 **Q: Can I use SAMC for Bayesian posterior sampling?**
 
@@ -235,13 +214,13 @@ A: They serve different users:
 
 A: Rule of thumb: set `t0` between `n_steps / 500` and `n_steps / 100`. Too small and weights oscillate; too large and adaptation is slow. The default works well for most problems.
 
-**Q: Why is my bin flatness low with `auto()`?**
+**Q: Why is my bin flatness low with the default growing bins?**
 
-A: `auto()` uses growing bins that expand on the fly. It needs more steps to achieve the same flatness as a fixed partition because each new bin starts with zero visits. For best flatness, use `UniformPartition` with a known energy range. The tradeoff: `auto()` requires zero configuration but needs longer mixing time.
+A: The default growing partition expands on the fly, so each new bin starts with zero visits and needs more steps to flatten. For best flatness, pass `partition=UniformPartition(...)` with a known energy range. The tradeoff: defaults require zero configuration but need longer mixing time.
 
 **Q: What does `from_warmup()` do?**
 
-A: It runs a short MH warmup (default 2000 steps) to discover your energy range, then creates a fixed `UniformPartition` from the observed range. It is the middle ground between `auto()` (zero config, growing bins) and manual range specification.
+A: `SAMCWeights.from_warmup(energy_fn, dim)` runs a short MH warmup (default 5000 steps) to discover your energy range, then creates a fixed `UniformPartition` from the observed range. It is the middle ground between the default (zero config, growing bins) and manual range specification.
 
 ## Acknowledgments
 

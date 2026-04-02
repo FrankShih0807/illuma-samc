@@ -19,7 +19,7 @@ add two lines to get SAMC:
 
 .. code-block:: python
 
-    wm = SAMCWeights(partition, gain)                         # <-- new
+    wm = SAMCWeights()                                        # <-- new
 
     for t in range(1, n_steps + 1):
         x_new = propose(x)
@@ -51,28 +51,56 @@ class SAMCWeights:
       the term you add to your MH log acceptance ratio.
     - :meth:`step` — updates the weights after accept/reject.
 
+    By default, bins grow automatically (no energy range needed).
+    For explicit control, pass ``partition`` and/or ``gain``.
+
     Parameters
     ----------
-    partition : Partition
-        Energy-space partition (defines bins).
-    gain : GainSequence
-        Step-size schedule for weight updates.
+    bin_width : float
+        Width of each energy bin (auto-growing mode). Default 0.2.
+    partition : Partition, optional
+        Explicit energy-space partition. Overrides ``bin_width`` if given.
+    gain : GainSequence or str, optional
+        Step-size schedule. Default ``"ramp"``.
+    gain_kwargs : dict, optional
+        Extra kwargs for :class:`GainSequence` (when ``gain`` is a string).
     device : str or torch.device
         Device for theta and counts tensors. Default ``"cpu"``.
     """
 
     def __init__(
         self,
-        partition: Partition,
-        gain: GainSequence,
         *,
+        bin_width: float = 0.2,
+        max_bins: int = 200,
+        partition: Partition | None = None,
+        gain: GainSequence | str | None = None,
+        gain_kwargs: dict | None = None,
         device: torch.device | str = "cpu",
         record_every: int = 100,
     ) -> None:
-        self.partition = partition
-        self.gain = gain
+        if partition is not None:
+            self.partition = partition
+        else:
+            from illuma_samc.partitions import GrowingPartition
 
-        n = partition.n_partitions
+            self.partition = GrowingPartition(
+                bin_width=bin_width,
+                max_bins=max_bins,
+            )
+
+        if isinstance(gain, GainSequence):
+            self.gain = gain
+        else:
+            default_gain_kwargs = {
+                "rho": 1.0,
+                "tau": 1.0,
+                "warmup": 1,
+                "step_scale": 1000,
+            }
+            self.gain = GainSequence(gain or "ramp", **(gain_kwargs or default_gain_kwargs))
+
+        n = self.partition.n_partitions
         self.theta = torch.zeros(n, device=device, dtype=torch.float64)
         self.counts = torch.zeros(n, device=device, dtype=torch.float64)
         self._refden = 1.0 / n
@@ -108,29 +136,8 @@ class SAMCWeights:
     ) -> "SAMCWeights":
         """Create SAMCWeights with auto-growing partition. No e_min/e_max needed.
 
-        Parameters
-        ----------
-        bin_width : float
-            Width of each regular bin. Default 0.2.
-        max_bins : int
-            Maximum total bins. Default 200.
-        growth : str
-            ``"eager"`` or ``"lazy"`` growth strategy.
-        expand_threshold : int
-            Overflow visits before expanding (lazy mode only).
-        gain : str or None
-            Gain schedule name. Default uses ``"ramp"``.
-        gain_kwargs : dict or None
-            Extra kwargs for :class:`GainSequence`.
-        device : str or torch.device
-            Device for tensors.
-        record_every : int
-            Snapshot interval for bin counts history.
-
-        Returns
-        -------
-        SAMCWeights
-            Weight manager with auto-growing partition.
+        .. deprecated::
+            Use ``SAMCWeights(bin_width=...)`` directly instead.
         """
         from illuma_samc.partitions import GrowingPartition
 
