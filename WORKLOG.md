@@ -1,5 +1,24 @@
 # illuma-samc Work Log
 
+## [2026-04-02] v0.2.0: Batch support, zero-config defaults, API cleanup
+- **Phase:** generalizing
+- **Status:** done
+- **Summary:**
+  - Added `n_chains` param to `SAMC.__init__` for explicit batch/multi-chain support (fixes user-reported `.item()` error on batched energy)
+  - Refactored `SAMCWeights` to zero-config `__init__` with lazy partition init (ExpandablePartition centered on first energy, 201 bins default)
+  - Batched tensor support in `correction()` and `step()`
+  - Trimmed public partition API to UniformPartition + GrowingPartition
+  - Changed flatness to visited-only metric (avoids penalizing unreachable bins)
+  - Rewrote README for user attraction: practical-first ordering, simplified math, added Liang 2009 reference
+  - Updated mh_vs_samc.ipynb with new API, moved to repo root
+  - Published to public repo
+- **Decisions made:**
+  - ExpandablePartition as default over GrowingPartition (wide uniform + expand on overflow beats grow-from-one-bin)
+  - Visited-only flatness after experiments showed over-specified bins unfairly penalize the metric
+  - bin_width=0.25, 100 bins per side as defaults after ablation comparison
+- **Blocked on:** Nothing.
+- **Affects:** Public API breaking change (SAMCWeights.auto() deprecated, __init__ is now zero-config).
+
 ## [2026-04-01] Phase 3: Ablation Study Steps 25-28
 - **Phase:** generalizing
 - **Status:** done

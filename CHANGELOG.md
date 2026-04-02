@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-04-02
+
+### Changed
+- `SAMCWeights` now uses traditional `__init__` with zero-config defaults (lazy partition init on first energy seen)
+- Default partition is `ExpandablePartition`: 201 uniform bins (100 above + center + 100 below first energy), expands on overflow
+- `flatness()` now computes over visited bins only (avoids penalizing unreachable bins)
+- Trimmed public API to `UniformPartition` and `GrowingPartition` only (removed `AdaptivePartition`, `QuantilePartition`)
+- README rewritten for clarity: leads with practical value, simplified math, tighter FAQ
+
+### Added
+- `n_chains` parameter on `SAMC.__init__` for explicit multi-chain / batch size
+- Batched tensor support in `SAMCWeights.correction()` and `.step()`
+- Better error message when `energy_fn` returns non-scalar in single-chain mode
+- Second reference: Liang (2009) in README and CITATION.bib
+
+### Fixed
+- `GrowingPartition` IndexError when partition expands mid-run (theta/counts now sync on resize)
+- `flatness()` NaN on single visited bin
+
 ## [0.1.0] - 2026-04-01
 
 ### Added
