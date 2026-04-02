@@ -361,7 +361,7 @@ class SAMCWeights:
         self,
         energy_current: float | torch.Tensor,
         energy_proposed: float | torch.Tensor,
-    ) -> float:
+    ) -> float | torch.Tensor:
         r"""SAMC weight correction to add to your MH log acceptance ratio.
 
         Returns :math:`\theta[k_x] - \theta[k_y]` where :math:`k_x, k_y`
@@ -375,18 +375,37 @@ class SAMCWeights:
         (reject the proposal). Returns ``+inf`` if current energy is
         out of range but proposed is in range (accept to get back in range).
 
+        Supports batched inputs: if energies are 1-D tensors with shape
+        ``(N,)``, returns a tensor of corrections with the same shape.
+
         Parameters
         ----------
         energy_current : float or Tensor
-            Energy of current state.
+            Energy of current state(s). Scalar or shape ``(N,)``.
         energy_proposed : float or Tensor
-            Energy of proposed state.
+            Energy of proposed state(s). Scalar or shape ``(N,)``.
 
         Returns
         -------
-        float
+        float or Tensor
             The correction term :math:`\theta[k_x] - \theta[k_y]`.
         """
+        # Batched path
+        if isinstance(energy_current, torch.Tensor) and energy_current.dim() >= 1:
+            kx = self.partition.assign_batch(energy_current)
+            self._maybe_resize()
+            ky = self.partition.assign_batch(energy_proposed)
+            self._maybe_resize()
+
+            result = torch.zeros(energy_current.shape[0], dtype=self.theta.dtype)
+            both_in = (kx >= 0) & (ky >= 0)
+            result[both_in] = self.theta[kx[both_in]] - self.theta[ky[both_in]]
+            result[(kx >= 0) & (ky < 0)] = float("-inf")
+            result[(kx < 0) & (ky >= 0)] = float("inf")
+            result[(kx < 0) & (ky < 0)] = 0.0
+            return result
+
+        # Scalar path
         ex = float(energy_current)
         ey = float(energy_proposed)
 
@@ -408,14 +427,41 @@ class SAMCWeights:
         Call once per iteration with the energy of the current state
         (after accept/reject).
 
+        Supports batched inputs: if energy is a 1-D tensor with shape
+        ``(N,)``, all elements contribute to the weight update in a
+        single step.
+
         Parameters
         ----------
         t : int
             Iteration number (1-indexed). Used to compute the gain.
         energy : float or Tensor
-            Energy of the current state.
+            Energy of the current state(s). Scalar or shape ``(N,)``.
         """
         self._t = t
+
+        # Batched path
+        if isinstance(energy, torch.Tensor) and energy.dim() >= 1:
+            ks = self.partition.assign_batch(energy)
+            self._maybe_resize()
+
+            valid = ks >= 0
+            if valid.any():
+                delta = self.gain(t)
+                valid_ks = ks[valid]
+                self.theta -= delta * self._refden * valid.sum().item()
+                for k in valid_ks:
+                    self.theta[k] += delta
+                    self.counts[k] += 1
+
+            # Track acceptance rate (skip for batched — not meaningful per-element)
+            self._n_steps += 1
+
+            if t % self._record_every == 0:
+                self.bin_counts_history.append(self.counts.clone())
+            return
+
+        # Scalar path
         e = float(energy)
 
         # Track acceptance rate (energy change implies acceptance)

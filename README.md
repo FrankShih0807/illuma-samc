@@ -56,6 +56,23 @@ for t in range(1, n_steps + 1):
 
 Your loop stays yours. `SAMCWeights` just manages the bin weights that let SAMC overcome energy barriers. Bins grow automatically -- no energy range needed.
 
+It works batched too -- same two methods, just pass tensors:
+
+```python
+wm = SAMCWeights()
+
+for t in range(1, n_steps + 1):
+    z_prop = z + 0.25 * torch.randn_like(z)
+    energy_prop = energy_fn(z_prop)
+
+    log_alpha = (-energy_prop + energy) / T + wm.correction(energy, energy_prop)
+    accept = torch.rand_like(log_alpha).log() < log_alpha
+
+    z = torch.where(accept.unsqueeze(-1), z_prop, z)
+    energy = torch.where(accept, energy_prop, energy)
+    wm.step(t, energy)
+```
+
 If you know your energy range, pass a `UniformPartition` for better bin flatness:
 
 ```python
