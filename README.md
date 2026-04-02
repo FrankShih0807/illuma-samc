@@ -95,7 +95,7 @@ wm = SAMCWeights(
 | Bins visited     |        N/A |      42/42 |
 | Extra code       |    0 lines |    2 lines |
 
-*2D multimodal benchmark, 500K steps, T=0.1. See `examples/mh_vs_samc.ipynb` for the full comparison.*
+*2D multimodal benchmark, 500K steps, T=0.1. See `mh_vs_samc.ipynb` for the full comparison.*
 
 ## Install
 
@@ -207,7 +207,7 @@ python examples/gaussian_mixture.py   # 4-mode Gaussian demo
 python examples/multimodal_2d.py      # Reproduce Liang's 2D experiment
 ```
 
-See `examples/mh_vs_samc.ipynb` for a side-by-side MH vs SAMC comparison.
+See `mh_vs_samc.ipynb` for a side-by-side MH vs SAMC comparison.
 
 ## FAQ
 
