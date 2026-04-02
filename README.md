@@ -54,7 +54,7 @@ for t in range(1, n_steps + 1):
     wm.step(t, fx)                                         # <- update weights
 ```
 
-Your loop stays yours. `SAMCWeights` just manages the bin weights that let SAMC overcome energy barriers. Bins grow automatically -- no energy range needed.
+Your loop stays yours. `SAMCWeights` just manages the bin weights that let SAMC overcome energy barriers. On the first energy it sees, it creates 201 uniform bins (100 above + center + 100 below) and expands if needed -- no energy range required.
 
 It works batched too -- same two methods, just pass tensors:
 
@@ -75,13 +75,13 @@ for t in range(1, n_steps + 1):
     wm.step(t, energy)                                  # (N,)
 ```
 
-If you know your energy range, pass a `UniformPartition` for better bin flatness:
+If you know your energy range, pass a `UniformPartition` for precise control:
 
 ```python
 from illuma_samc import SAMCWeights, UniformPartition, GainSequence
 
 wm = SAMCWeights(
-    partition=UniformPartition(e_min=0, e_max=10, n_bins=20),
+    partition=UniformPartition(e_min=0, e_max=10, n_bins=40),
     gain=GainSequence("1/t", t0=1000),
 )
 ```
@@ -213,7 +213,7 @@ See `examples/mh_vs_samc.ipynb` for a side-by-side MH vs SAMC comparison.
 
 **Q: How do I choose `e_min` and `e_max`?**
 
-A: If you don't know your energy range, just use the defaults -- `SAMCWeights()` grows bins on the fly. `SAMCWeights.from_warmup(energy_fn, dim)` runs a quick MH warmup to discover the range, then creates fixed bins. For `SAMC`, omit `e_min`/`e_max` and it auto-detects via warmup. If you know the range, pass `partition=UniformPartition(...)` for the best bin flatness.
+A: You don't have to. `SAMCWeights()` auto-creates 201 bins centered on the first energy it sees (100 above + center + 100 below, bin_width=0.25) and expands if needed. If you know the range, pass `partition=UniformPartition(e_min=..., e_max=..., n_bins=...)` for precise control.
 
 **Q: Can I use SAMC for Bayesian posterior sampling?**
 
@@ -233,13 +233,9 @@ A: They serve different users:
 
 A: Rule of thumb: set `t0` between `n_steps / 500` and `n_steps / 100`. Too small and weights oscillate; too large and adaptation is slow. The default works well for most problems.
 
-**Q: Why is my bin flatness low with the default growing bins?**
-
-A: The default growing partition expands on the fly, so each new bin starts with zero visits and needs more steps to flatten. For best flatness, pass `partition=UniformPartition(...)` with a known energy range. The tradeoff: defaults require zero configuration but need longer mixing time.
-
 **Q: What does `from_warmup()` do?**
 
-A: `SAMCWeights.from_warmup(energy_fn, dim)` runs a short MH warmup (default 5000 steps) to discover your energy range, then creates a fixed `UniformPartition` from the observed range. It is the middle ground between the default (zero config, growing bins) and manual range specification.
+A: `SAMCWeights.from_warmup(energy_fn, dim)` runs a short MH warmup (default 5000 steps) to discover your energy range, then creates a fixed `UniformPartition` from the observed range. Useful when you want tighter bins than the default 201.
 
 ## Acknowledgments
 
