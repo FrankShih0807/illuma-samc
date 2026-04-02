@@ -8,32 +8,6 @@
 
 Same energy landscape. Same proposal. Same compute budget. At T=0.1, **MH gets trapped** in a single basin. **SAMC explores everything**.
 
-## How It Works
-
-Let $p(\mathbf{x}) = c \, p_0(\mathbf{x})$ be the target distribution, where $U(\mathbf{x}) = -\log p_0(\mathbf{x})$ is the energy function. Standard Metropolis-Hastings samples from $p(\mathbf{x})$ directly, but at low temperature, energy barriers become insurmountable and the chain gets trapped in a single mode.
-
-SAMC partitions the energy space into $m$ disjoint subregions $E_1, \ldots, E_m$ and learns **log-density-of-states estimates** $\theta_t = (\theta_{t1}, \ldots, \theta_{tm})$ that flatten the energy histogram. At iteration $t$, the sampler targets the *working density* (Eq. 3 in Liang et al.):
-
-$$p_{\theta_t}(\mathbf{x}) = \frac{1}{Z_t} \sum_{i=1}^{m} \frac{\psi(\mathbf{x})}{e^{\theta_{ti}}} I(\mathbf{x} \in E_i)$$
-
-where $\psi(\mathbf{x})$ is a biasing function (typically set to $p_0(\mathbf{x})$). As $\theta$ converges, $p_{\theta}$ becomes approximately uniform across energy levels -- the sampler visits all subregions equally, escaping any local trap.
-
-The MH acceptance ratio under the working density gains a weight correction:
-
-$$\alpha = \min\left(1,\; \exp\left(\theta_{J(\mathbf{x})} - \theta_{J(\mathbf{y})} - \frac{U(\mathbf{y}) - U(\mathbf{x})}{T}\right)\right)$$
-
-where $J(\mathbf{x})$ denotes the subregion index for state $\mathbf{x}$. After each step, the weights are updated via stochastic approximation (the SAMC update rule):
-
-$$\theta_{t+1} = \theta_t + \gamma_{t+1}(\mathbf{e}_{t+1} - \boldsymbol{\pi})$$
-
-where $\gamma_t = t_0 / \max(t_0, t)$ is a gain sequence satisfying $\sum \gamma_t = \infty$ and $\sum \gamma_t^\zeta < \infty$ for some $\zeta \in (1, 2)$, $\mathbf{e}_{t+1}$ is the indicator vector for the occupied subregion, and $\boldsymbol{\pi} = (\pi_1, \ldots, \pi_m)$ is the desired sampling frequency (uniform by default).
-
-**Recovering the target distribution.** Since SAMC samples from the flattened $p_{\theta}$, not the original $p$, you recover correct samples via binary resampling: keep each sample $\mathbf{x}$ with probability $\propto \exp(\theta_{J(\mathbf{x})})$. The resampled set is an unweighted draw from the target $p$.
-
-> **Faming Liang, Chuanhai Liu, and Raymond J. Carroll.** *Stochastic Approximation in Monte Carlo Computation.* Journal of the American Statistical Association, 102(477):305-320, 2007.
-
-See `CITATION.bib` for the BibTeX entry.
-
 ## Two Lines. That's It.
 
 If you already have a Metropolis-Hastings loop, add two lines to get SAMC:
@@ -54,9 +28,9 @@ for t in range(1, n_steps + 1):
     wm.step(t, fx)                                         # <- update weights
 ```
 
-Your loop stays yours. `SAMCWeights` just manages the bin weights that let SAMC overcome energy barriers. On the first energy it sees, it creates 201 uniform bins (100 above + center + 100 below) and expands if needed -- no energy range required.
+That's it. No energy range needed -- bins are created automatically on the first step and expand as the sampler explores.
 
-It works batched too -- same two methods, just pass tensors:
+Works batched too -- pass tensors instead of scalars:
 
 ```python
 wm = SAMCWeights()
@@ -90,12 +64,12 @@ wm = SAMCWeights(
 
 |                  |         MH |       SAMC |
 |------------------|-----------:|-----------:|
-| Accept rate      |      0.047 |      0.436 |
-| Bin flatness     |        N/A |      0.951 |
-| Bins visited     |        N/A |      42/42 |
+| Accept rate      |      0.047 |      0.412 |
+| Bin flatness     |        N/A |      0.990 |
+| Best energy      |     -8.125 |     -8.125 |
 | Extra code       |    0 lines |    2 lines |
 
-*2D multimodal benchmark, 500K steps, T=0.1. See `mh_vs_samc.ipynb` for the full comparison.*
+*2D multimodal benchmark, 500K steps, T=0.1. See [`mh_vs_samc.ipynb`](mh_vs_samc.ipynb) for the full comparison with plots.*
 
 ## Install
 
@@ -119,21 +93,22 @@ def energy_fn(x):
         0.5 * torch.sum((x + 2) ** 2),
     )
 
-sampler = SAMC(energy_fn=energy_fn, dim=2, n_partitions=20, e_min=0, e_max=10)
+sampler = SAMC(energy_fn=energy_fn, dim=2)
 result = sampler.run(n_steps=100_000)
 
 print(f"Best energy: {result.best_energy:.4f}")
 print(f"Acceptance rate: {result.acceptance_rate:.3f}")
 ```
 
-If you don't know the energy range, omit `e_min`/`e_max` and SAMC will auto-detect it via a short warmup:
+Multi-chain with shared weights:
 
 ```python
-sampler = SAMC(energy_fn=energy_fn, dim=2)
+sampler = SAMC(energy_fn=energy_fn, dim=2, n_chains=4)
 result = sampler.run(n_steps=100_000)
+# result.samples has shape (4, n_saved, dim)
 ```
 
-Full control over proposal, partition, and gain schedule:
+Full control over proposal, partition, and gain:
 
 ```python
 from illuma_samc import SAMC, GainSequence, GaussianProposal, UniformPartition
@@ -142,7 +117,7 @@ sampler = SAMC(
     energy_fn=energy_fn,
     dim=2,
     proposal_fn=GaussianProposal(step_size=0.5),
-    partition_fn=UniformPartition(e_min=0, e_max=10, n_bins=20),
+    partition_fn=UniformPartition(e_min=0, e_max=10, n_bins=40),
     gain=GainSequence("1/t", t0=1000),
     temperature=0.1,
 )
@@ -150,92 +125,45 @@ result = sampler.run(n_steps=100_000, burn_in=100)
 sampler.plot_diagnostics()
 ```
 
-## Gain Schedule
+## How It Works
 
-The gain $\gamma_t$ controls how quickly SAMC adapts its weights. The default `"1/t"` schedule (Liang 2007) is all you need:
+SAMC partitions the energy space into $m$ subregions and learns **log-density-of-states estimates** $\theta_t$ that flatten the energy histogram. The MH acceptance ratio gains a weight correction:
 
-```python
-GainSequence("1/t", t0=1000)  # gain = 1.0 for first t0 steps, then decays as t0/t
-```
+$$\alpha = \min\left(1,\; \exp\left(\theta_{J(\mathbf{x})} - \theta_{J(\mathbf{y})} - \frac{U(\mathbf{y}) - U(\mathbf{x})}{T}\right)\right)$$
 
-`t0` is the only parameter that matters -- set it to `n_iters / 500` to `n_iters / 100`. You can also pass your own schedule:
+where $J(\mathbf{x})$ is the subregion index. After each step, the weights update via stochastic approximation:
 
-```python
-GainSequence(lambda t: min(1.0, 1000 / t))  # any (int) -> float callable
-```
+$$\theta_{t+1} = \theta_t + \gamma_{t+1}(\mathbf{e}_{t+1} - \boldsymbol{\pi})$$
 
-## Multi-Chain SAMC
+where $\gamma_t$ is a decreasing gain sequence, $\mathbf{e}_{t+1}$ is the indicator for the occupied subregion, and $\boldsymbol{\pi}$ is the desired visit frequency (uniform by default). As $\theta$ converges, the sampler visits all energy levels equally, escaping any local trap.
 
-Run multiple chains with shared weights for faster bin flattening:
-
-```python
-sampler = SAMC(energy_fn=energy_fn, dim=2, n_chains=4)
-result = sampler.run(n_steps=100_000)
-# result.samples has shape (4, n_saved, dim)
-```
-
-Or from the CLI:
-
-```bash
-python train.py --algo samc --model 2d --n_chains 4                        # shared weights (default)
-python train.py --algo samc --model 2d --n_chains 4 --shared_weights false # independent weights
-```
-
-Shared weights: all chains update the same `SAMCWeights` interleaved, flattening bins faster.
-
-## Experiment CLI
-
-```bash
-python train.py --algo samc --model 2d                    # basic run
-python train.py --algo samc --model 2d --plot_energy      # show energy trace
-python train.py --algo samc --model 2d --auto_range       # warmup to discover range, then fixed bins (best flatness)
-python train.py --algo samc --model 2d --growing          # bins grow on the fly, no range needed (bin_width=0.2)
-python train.py --algo samc --model 2d --growing --bin_width 0.5  # custom bin width
-python train.py --algo samc --model 10d --n_chains 4      # multi-chain
-python train.py --algo mh --model 2d                      # MH baseline
-python train.py --algo pt --model 2d                      # PT baseline
-python train.py --algo samc --model 2d --name my_experiment  # named output folder
-```
-
-Results saved to `outputs/<model>/<algo>/<name or timestamp>/` with `config.yaml`, `results.json`, and diagnostic plots.
-
-## Examples
-
-```bash
-python examples/demo_showcase.py      # All-in-one showcase
-python examples/gaussian_mixture.py   # 4-mode Gaussian demo
-python examples/multimodal_2d.py      # Reproduce Liang's 2D experiment
-```
-
-See `mh_vs_samc.ipynb` for a side-by-side MH vs SAMC comparison.
+**Recovering the target distribution.** SAMC samples from a flattened distribution. Reweight each sample by $\exp(\theta_{J(\mathbf{x})})$ to recover the original target, or call `resample()` for unweighted draws.
 
 ## FAQ
 
-**Q: How do I choose `e_min` and `e_max`?**
+**Q: How do I choose the energy range?**
 
-A: You don't have to. `SAMCWeights()` auto-creates 201 bins centered on the first energy it sees (100 above + center + 100 below, bin_width=0.25) and expands if needed. If you know the range, pass `partition=UniformPartition(e_min=..., e_max=..., n_bins=...)` for precise control.
+A: You don't have to. `SAMCWeights()` auto-creates bins centered on the first energy it sees and expands as needed. If you know the range, pass `partition=UniformPartition(...)` for tighter bins.
 
 **Q: Can I use SAMC for Bayesian posterior sampling?**
 
-A: Yes. Set your energy function to the negative log-posterior: `energy_fn = -log p(x | data) - log p(x)`. SAMC samples from a flattened distribution; call `resample()` to recover unweighted draws from your posterior. This is especially useful for multimodal posteriors where standard MCMC gets trapped.
+A: Yes. Set `energy_fn = -log p(x | data) - log p(x)`. Call `resample()` to recover unweighted posterior draws. Especially useful for multimodal posteriors where standard MCMC gets trapped.
 
 **Q: What temperature should I use?**
 
-A: Temperature $T$ scales the energy in the Boltzmann factor $\exp(-U(\mathbf{x})/T)$. Low temperature ($T < 1$) sharpens the distribution around minima, making the landscape rugged -- exactly where MH gets trapped and SAMC shines. Start with $T = 1.0$ for exploration, lower it (e.g., $T = 0.1$) to concentrate around the best solutions.
+A: Start with $T = 1.0$ for exploration, lower it (e.g., $T = 0.1$) to concentrate around the best solutions. Low temperature is exactly where MH gets trapped and SAMC shines.
 
-**Q: When should I use `SAMC` vs `SAMCWeights`?**
+**Q: `SAMC` vs `SAMCWeights`?**
 
-A: They serve different users:
-- **`SAMCWeights`** -- Drop-in for your existing MH loop. You control the proposal, acceptance, and loop. Maximum flexibility for researchers and engineers.
-- **`SAMC`** -- Batteries-included sampler. Handles the loop, proposals, diagnostics, and burn-in. Best for getting started quickly.
+A: **`SAMCWeights`** drops into your existing MH loop -- you control the proposal and acceptance. **`SAMC`** is batteries-included -- handles the loop, proposals, diagnostics, and burn-in.
 
-**Q: How do I choose `t0` in the gain schedule?**
+## References
 
-A: Rule of thumb: set `t0` between `n_steps / 500` and `n_steps / 100`. Too small and weights oscillate; too large and adaptation is slow. The default works well for most problems.
+> **Faming Liang, Chuanhai Liu, and Raymond J. Carroll.** *Stochastic Approximation in Monte Carlo Computation.* Journal of the American Statistical Association, 102(477):305-320, 2007.
 
-**Q: What does `from_warmup()` do?**
+> **Faming Liang.** *On the Use of Stochastic Approximation Monte Carlo for Monte Carlo Integration.* Statistics & Probability Letters, 79(5):581-587, 2009.
 
-A: `SAMCWeights.from_warmup(energy_fn, dim)` runs a short MH warmup (default 5000 steps) to discover your energy range, then creates a fixed `UniformPartition` from the observed range. Useful when you want tighter bins than the default 201.
+See `CITATION.bib` for BibTeX entries.
 
 ## Acknowledgments
 
