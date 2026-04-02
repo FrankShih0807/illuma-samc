@@ -7,11 +7,8 @@ from illuma_samc import analysis, baselines, problems  # noqa: F401
 from illuma_samc.diagnostics import plot_diagnostics, plot_weight_diagnostics
 from illuma_samc.gain import GainSequence
 from illuma_samc.partitions import (
-    AdaptivePartition,
-    ExpandablePartition,
     GrowingPartition,
     Partition,
-    QuantilePartition,
     UniformPartition,
 )
 from illuma_samc.proposals import GaussianProposal, LangevinProposal, Proposal
@@ -25,10 +22,7 @@ __all__ = [
     "GainSequence",
     "Partition",
     "UniformPartition",
-    "AdaptivePartition",
-    "ExpandablePartition",
     "GrowingPartition",
-    "QuantilePartition",
     "Proposal",
     "GaussianProposal",
     "LangevinProposal",

@@ -405,6 +405,16 @@ class SAMC:
         counts = torch.zeros(self._n_partitions, device=device, dtype=torch.float64)
         refden = 1.0 / self._n_partitions
 
+        def _sync_size() -> None:
+            """Grow theta/counts if the partition added bins."""
+            nonlocal theta, counts, refden
+            n = self._partition.n_partitions
+            if n > len(theta):
+                pad = n - len(theta)
+                theta = torch.cat([theta, torch.zeros(pad, dtype=theta.dtype, device=device)])
+                counts = torch.cat([counts, torch.zeros(pad, dtype=counts.dtype, device=device)])
+                refden = 1.0 / n
+
         best_x = x.clone()
         best_energy = fx_val
         samples: list[torch.Tensor] = []
@@ -419,12 +429,14 @@ class SAMC:
         for it in iterator:
             delta = self._gain(it)
             k1 = self._partition.assign(fx)
+            _sync_size()
 
             # Propose
             x_new = self._proposal.propose(x)
             fy, in_reg = self._compute_energy(x_new)
             fy_val = fy.item()
             k2 = self._partition.assign(fy)
+            _sync_size()
 
             # Reject if proposal lands outside partition range
             if k2 < 0:
@@ -585,6 +597,16 @@ class SAMC:
         counts = torch.zeros(self._n_partitions, dtype=torch.float64)
         refden = 1.0 / self._n_partitions
 
+        def _sync_size() -> None:
+            """Grow theta/counts if the partition added bins."""
+            nonlocal theta, counts, refden
+            n = self._partition.n_partitions
+            if n > len(theta):
+                pad = n - len(theta)
+                theta = torch.cat([theta, torch.zeros(pad, dtype=theta.dtype)])
+                counts = torch.cat([counts, torch.zeros(pad, dtype=counts.dtype)])
+                refden = 1.0 / n
+
         best_x = x[0].clone()
         best_energy = fx.min().item()
         best_idx = fx.argmin().item()
@@ -615,7 +637,9 @@ class SAMC:
                 fx_c = fx[c].item()
                 fy_c = fy[c].item()
                 k1 = self._partition.assign(fx[c])
+                _sync_size()
                 k2 = self._partition.assign(fy[c])
+                _sync_size()
 
                 in_reg_c = in_reg[c].item()
                 # Reject if proposal lands outside partition range
