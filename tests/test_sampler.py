@@ -513,6 +513,67 @@ class TestMultiChain:
         assert result.samples.shape == (20, 2)
         assert result.energy_history.shape == (200,)
 
+    def test_n_chains_param(self):
+        """n_chains at init auto-generates x0 and routes to multi-chain."""
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_chains=2,
+            n_partitions=10,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=1000, save_every=10, progress=False)
+
+        assert result.samples.shape == (2, 100, 2)
+        assert result.energy_history.shape == (1000, 2)
+        assert result.sample_log_weights.shape == (2, 100)
+        assert 0.0 <= result.acceptance_rate <= 1.0
+
+    def test_n_chains_x0_mismatch(self):
+        """n_chains and x0 shape mismatch raises ValueError."""
+        import pytest
+
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_chains=4,
+            e_min=-5.0,
+            e_max=5.0,
+        )
+        with pytest.raises(ValueError, match="n_chains=4"):
+            sampler.run(n_steps=10, x0=torch.zeros(2, 2), progress=False)
+
+    def test_n_chains_with_matching_x0(self):
+        """n_chains works when x0 shape matches."""
+        torch.manual_seed(0)
+        x0 = torch.randn(2, 2)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_chains=2,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=200, x0=x0, save_every=10, progress=False)
+        assert result.samples.shape == (2, 20, 2)
+
+    def test_batched_energy_error_in_single_chain(self):
+        """Single-chain with batched energy_fn gives clear error."""
+        import pytest
+
+        def batched_energy(x):
+            return torch.tensor([1.0, 2.0])
+
+        sampler = SAMC(energy_fn=batched_energy, dim=2, e_min=0, e_max=5)
+        with pytest.raises(ValueError, match="n_chains"):
+            sampler.run(n_steps=10, progress=False)
+
     def test_multi_chain_shared_weights_converge(self):
         """Multi-chain with shared weights should converge similarly to single chain.
 
