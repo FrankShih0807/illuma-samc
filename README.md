@@ -61,16 +61,18 @@ It works batched too -- same two methods, just pass tensors:
 ```python
 wm = SAMCWeights()
 
+# z: (N, dim) -- batch of N states
+# energy, energy_prop: (N,) -- one scalar energy per state
 for t in range(1, n_steps + 1):
-    z_prop = z + 0.25 * torch.randn_like(z)
-    energy_prop = energy_fn(z_prop)
+    z_prop = z + 0.25 * torch.randn_like(z)       # (N, dim)
+    energy_prop = energy_fn(z_prop)                # (N,)
 
-    log_alpha = (-energy_prop + energy) / T + wm.correction(energy, energy_prop)
-    accept = torch.rand_like(log_alpha).log() < log_alpha
+    log_alpha = (-energy_prop + energy) / T + wm.correction(energy, energy_prop)  # (N,)
+    accept = torch.rand_like(log_alpha).log() < log_alpha                         # (N,)
 
-    z = torch.where(accept.unsqueeze(-1), z_prop, z)
-    energy = torch.where(accept, energy_prop, energy)
-    wm.step(t, energy)
+    z = torch.where(accept.unsqueeze(-1), z_prop, z)   # (N, dim)
+    energy = torch.where(accept, energy_prop, energy)   # (N,)
+    wm.step(t, energy)                                  # (N,)
 ```
 
 If you know your energy range, pass a `UniformPartition` for better bin flatness:
