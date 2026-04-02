@@ -1,0 +1,60 @@
+Non-Commercial Research Use License
+
+Copyright (c) 2024-2026 Frank Shih (fshih37@gmail.com)
+All rights reserved.
+
+SOFTWARE: illuma-samc
+
+TERMS AND CONDITIONS
+
+1. GRANT OF LICENSE
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use,
+copy, modify, and distribute the Software for academic, educational, and
+non-commercial research purposes only, subject to the following conditions:
+
+2. NON-COMMERCIAL USE
+
+"Non-commercial use" means use that is not intended for or directed toward
+commercial advantage or monetary compensation. This includes, but is not
+limited to:
+
+  (a) Academic research at universities and research institutions
+  (b) Personal study and experimentation
+  (c) Publication of research results obtained using the Software
+  (d) Teaching and educational activities
+
+3. COMMERCIAL USE REQUIRES SEPARATE LICENSE
+
+Any use of the Software for commercial purposes — including but not limited to
+incorporating the Software into a commercial product, using it to provide
+commercial services, or using it in any revenue-generating activity — requires
+prior written permission from the author.
+
+To obtain a commercial license, contact:
+
+  Frank Shih <fshih37@gmail.com>
+
+4. ATTRIBUTION
+
+All copies or substantial portions of the Software must include this license
+notice and the above copyright notice.
+
+Publications and presentations that use this Software should cite it
+appropriately.
+
+5. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+6. TERMINATION
+
+This license is automatically terminated if you violate any of its terms.
+Upon termination, you must destroy all copies of the Software in your
+possession.
