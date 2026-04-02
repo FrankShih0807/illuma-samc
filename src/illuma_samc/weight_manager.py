@@ -51,15 +51,21 @@ class SAMCWeights:
       the term you add to your MH log acceptance ratio.
     - :meth:`step` — updates the weights after accept/reject.
 
-    By default, bins grow automatically (no energy range needed).
-    For explicit control, pass ``partition`` and/or ``gain``.
+    By default, bins are initialized on the first energy seen: a wide
+    uniform partition is centered on that energy and expands if the
+    sampler wanders outside. For explicit control, pass ``partition``.
 
     Parameters
     ----------
     bin_width : float
-        Width of each energy bin (auto-growing mode). Default 0.2.
+        Width of each energy bin. Default 0.25.
+    n_bins_per_side : int
+        Number of bins above and below the starting energy.
+        Default 100 (201 total bins: 100 below + 1 center + 100 above).
+    max_bins : int
+        Maximum bins after expansion. Default 500.
     partition : Partition, optional
-        Explicit energy-space partition. Overrides ``bin_width`` if given.
+        Explicit energy-space partition. Overrides auto-initialization.
     gain : GainSequence or str, optional
         Step-size schedule. Default ``"ramp"``.
     gain_kwargs : dict, optional
@@ -71,23 +77,27 @@ class SAMCWeights:
     def __init__(
         self,
         *,
-        bin_width: float = 0.2,
-        max_bins: int = 200,
+        bin_width: float = 0.25,
+        n_bins_per_side: int = 100,
+        max_bins: int = 1000,
         partition: Partition | None = None,
         gain: GainSequence | str | None = None,
         gain_kwargs: dict | None = None,
         device: torch.device | str = "cpu",
         record_every: int = 100,
     ) -> None:
+        self._device = torch.device(device)
+
         if partition is not None:
             self.partition = partition
+            self._deferred_init = False
         else:
-            from illuma_samc.partitions import GrowingPartition
-
-            self.partition = GrowingPartition(
-                bin_width=bin_width,
-                max_bins=max_bins,
-            )
+            # Defer partition creation until first energy is seen
+            self.partition = None  # type: ignore[assignment]
+            self._deferred_init = True
+            self._bin_width = bin_width
+            self._n_bins_per_side = n_bins_per_side
+            self._max_bins = max_bins
 
         if isinstance(gain, GainSequence):
             self.gain = gain
@@ -100,10 +110,15 @@ class SAMCWeights:
             }
             self.gain = GainSequence(gain or "ramp", **(gain_kwargs or default_gain_kwargs))
 
-        n = self.partition.n_partitions
-        self.theta = torch.zeros(n, device=device, dtype=torch.float64)
-        self.counts = torch.zeros(n, device=device, dtype=torch.float64)
-        self._refden = 1.0 / n
+        if not self._deferred_init:
+            n = self.partition.n_partitions
+            self.theta = torch.zeros(n, device=self._device, dtype=torch.float64)
+            self.counts = torch.zeros(n, device=self._device, dtype=torch.float64)
+            self._refden = 1.0 / n
+        else:
+            self.theta = torch.empty(0, device=self._device, dtype=torch.float64)
+            self.counts = torch.empty(0, device=self._device, dtype=torch.float64)
+            self._refden = 0.0
         self._t = 0
 
         # History tracking
@@ -116,6 +131,33 @@ class SAMCWeights:
         self._last_energy: float | None = None
         self._warmup_done = False
         self._acceptance_warned = False
+
+    def _init_partition_from_energy(self, energy: float) -> None:
+        """Create the partition centered on the first energy seen.
+
+        Places ``n_bins_per_side`` bins on each side of the starting
+        energy, giving ``2 * n_bins_per_side + 1`` bins total (default 201).
+        """
+        from illuma_samc.partitions import ExpandablePartition
+
+        n_side = self._n_bins_per_side
+        n_bins = 2 * n_side + 1
+        half = n_side * self._bin_width
+        e_min = energy - half - self._bin_width / 2
+        e_max = energy + half + self._bin_width / 2
+
+        self.partition = ExpandablePartition(
+            e_min=e_min,
+            e_max=e_max,
+            n_bins=n_bins,
+            max_bins=self._max_bins,
+        )
+        self._deferred_init = False
+
+        n = self.partition.n_partitions
+        self.theta = torch.zeros(n, device=self._device, dtype=torch.float64)
+        self.counts = torch.zeros(n, device=self._device, dtype=torch.float64)
+        self._refden = 1.0 / n
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -349,7 +391,9 @@ class SAMCWeights:
 
     @property
     def n_bins(self) -> int:
-        """Number of energy bins."""
+        """Number of energy bins (0 if partition not yet initialized)."""
+        if self._deferred_init:
+            return 0
         return self.partition.n_partitions
 
     @property
@@ -390,6 +434,13 @@ class SAMCWeights:
         float or Tensor
             The correction term :math:`\theta[k_x] - \theta[k_y]`.
         """
+        # Lazy init: create partition centered on first energy
+        if self._deferred_init:
+            if isinstance(energy_current, torch.Tensor) and energy_current.dim() >= 1:
+                self._init_partition_from_energy(energy_current[0].item())
+            else:
+                self._init_partition_from_energy(float(energy_current))
+
         # Batched path
         if isinstance(energy_current, torch.Tensor) and energy_current.dim() >= 1:
             kx = self.partition.assign_batch(energy_current)
@@ -439,6 +490,13 @@ class SAMCWeights:
             Energy of the current state(s). Scalar or shape ``(N,)``.
         """
         self._t = t
+
+        # Lazy init: create partition centered on first energy
+        if self._deferred_init:
+            if isinstance(energy, torch.Tensor) and energy.dim() >= 1:
+                self._init_partition_from_energy(energy[0].item())
+            else:
+                self._init_partition_from_energy(float(energy))
 
         # Batched path
         if isinstance(energy, torch.Tensor) and energy.dim() >= 1:
@@ -526,32 +584,31 @@ class SAMCWeights:
         return self._n_accepted / self._n_steps
 
     def flatness(self) -> float:
-        """Bin visit flatness: ``1 - std(counts) / mean(counts)``.
+        """Bin visit flatness over visited bins: ``1 - std / mean``.
 
-        Returns 1.0 for perfectly flat visits, lower for uneven visits.
-        Values can be negative if visits are extremely skewed.
-        Returns 0.0 if no bins have been visited.
+        Only bins with at least one visit are included.
+        Returns 1.0 for perfectly flat visits (or single visited bin),
+        lower for uneven visits.  Returns 0.0 if no bins have been visited.
         """
-        counts = self.counts.float()
-        mean = counts.mean()
-        if mean == 0:
-            return 0.0
-        return float(1.0 - counts.std() / mean)
+        visited = self.counts[self.counts > 0].float()
+        if len(visited) <= 1:
+            return 1.0 if len(visited) == 1 else 0.0
+        mean = visited.mean()
+        return float(1.0 - visited.std() / mean)
 
     def flatness_history(self) -> list[float]:
         """Flatness at each recorded snapshot.
 
         Returns a list of flatness values, one per snapshot recorded
-        every ``record_every`` steps.
+        every ``record_every`` steps. Computed over visited bins only.
         """
         result = []
         for snapshot in self.bin_counts_history:
-            c = snapshot.float()
-            mean = c.mean()
-            if mean == 0:
+            visited = snapshot[snapshot > 0].float()
+            if len(visited) == 0:
                 result.append(0.0)
             else:
-                result.append(float(1.0 - c.std() / mean))
+                result.append(float(1.0 - visited.std() / visited.mean()))
         return result
 
     def importance_log_weights(

@@ -182,7 +182,8 @@ class TestFlatness:
     def test_skewed_visits(self):
         wm = make_wm()
         wm.counts = torch.zeros(10, dtype=torch.float64)
-        wm.counts[0] = 1000  # all visits in one bin
+        wm.counts[0] = 1000
+        wm.counts[1] = 10  # two visited bins, heavily skewed
         assert wm.flatness() < 0.5
 
 
