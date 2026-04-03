@@ -1,5 +1,25 @@
 # illuma-samc Work Log
 
+## [2026-04-03] Steps 50-51: Independent weights default + bin_width alignment
+- **State:** generalizing
+- **Status:** done
+- **Summary:**
+  - Step 50: `SAMC(n_chains=N)` now defaults to independent chains (`shared_weights=False`). Each chain gets a fresh partition and proposal via `_reset_partition_and_proposal()`. New `_run_independent_chains()` runs N serial single-chain runs, aggregates to same output shapes as shared mode. Added `shared_weights=True` to `test_multi_chain_shared_weights_converge` and two new independent-chain tests.
+  - Step 51: Changed default `bin_width` from 0.25 to 0.5 in both `SAMCWeights.__init__` and `SAMC._init_partition_from_energy`. Updated docstring. No test changes needed (no tests asserted specific bin counts from the default).
+- **Decisions made:** Used Option A (reset partition/proposal state before each chain). Output shapes `(N, n_saved, dim)`, `(n_steps, N)` are identical for both modes, so most existing tests required no change.
+
+## [2026-04-03] Step 49: Remove unused partition types
+- **State:** generalizing
+- **Status:** done
+- **Summary:**
+  - Removed `AdaptivePartition`, `QuantilePartition`, `GrowingPartition` from `partitions.py`.
+  - Removed `SAMCWeights.auto()` and `SAMCWeights.from_warmup()` from `weight_manager.py`.
+  - Simplified `_resize_for_partition` by removing `GrowingPartition`-specific low-side insertion logic.
+  - Updated `__init__.py` exports: replaced `GrowingPartition` with `ExpandablePartition`.
+  - Removed 21 tests covering removed classes/methods across `test_partitions.py` and `test_weight_manager.py`.
+  - Updated `train.py` and `test_sampler.py` to remove all references to removed types.
+- **Decisions made:** Kept `_resize_for_partition` method — still needed for `ExpandablePartition`; kept `ExpandablePartition` as the sole dynamic partition type.
+
 ## [2026-04-03] Steps 43-45: Robust Defaults Validation
 - **State:** generalizing
 - **Status:** done

@@ -20,6 +20,28 @@
   save_every: 100
   seed: 42
 
+50d:
+  n_partitions: 40
+  e_min: 0.0
+  e_max: 50.0
+  proposal_std: 0.5
+  n_iters: 500000
+  gain: ramp
+  gain_kwargs: {rho: 1.0, tau: 1.0, warmup: 1, step_scale: 1000}
+  save_every: 100
+  seed: 42
+
+100d:
+  n_partitions: 50
+  e_min: 0.0
+  e_max: 100.0
+  proposal_std: 0.3
+  n_iters: 500000
+  gain: ramp
+  gain_kwargs: {rho: 1.0, tau: 1.0, warmup: 1, step_scale: 1000}
+  save_every: 100
+  seed: 42
+
 rosenbrock:
   n_partitions: 30
   e_min: 0.0

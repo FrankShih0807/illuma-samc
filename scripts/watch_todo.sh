@@ -61,8 +61,10 @@ launch_claude() {
     git pull --rebase origin main 2>/dev/null || true
     source "$(conda info --base 2>/dev/null)/etc/profile.d/conda.sh" 2>/dev/null && conda activate illuma-samc 2>/dev/null
 
-    claude --allowedTools "Bash,Edit,Read,Write,Glob,Grep" \
-        -p "You are an L3 Worker. Read ../AGENT_PLAYBOOK.md Section 5 for your start/end checklists. Read CLAUDE.md and WORKLOG.md (last 3 entries). Work through TODO.md IN ORDER — complete all items in a step before moving on. If stuck, create BLOCKED.md." \
+    SESSION_ID="$(date +%Y%m%d-%H%M%S)-$$"
+    export CLAUDE_AGENT_LEVEL=L3
+    claude --model sonnet --allowedTools "Bash,Edit,Read,Write,Glob,Grep" \
+        -p "You are an L3 Worker (session: $SESSION_ID). Read ../AGENT_PLAYBOOK.md Section 5 for your start/end checklists. Read CLAUDE.md and WORKLOG.md (last 3 entries). Work through TODO.md IN ORDER — complete all items in a step before moving on. Include 'session: $SESSION_ID' in your WORKLOG entry header. If stuck, create BLOCKED.md." \
         >> "$LOG_FILE" 2>&1 &
 
     local child_pid=$!

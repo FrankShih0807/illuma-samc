@@ -7,6 +7,8 @@ Read `../AGENT_PLAYBOOK.md` for the full agent hierarchy. To determine your leve
 - **If Frank is talking to you interactively** → you are **L2 Project Lead**. You own this project's direction, make decisions, update STATUS.md and WORKLOG.md.
 - **If you were launched by `watch_todo.sh` or as a subagent** → you are **L3 Worker**. Follow TODO.md steps in order, write WORKLOG.md, create BLOCKED.md if stuck.
 
+**L2 Plan-Before-Act:** For every TODO step: analyze → plan (which files, approach, risks) → decide. If no code or ≤3 isolated source files, do it directly. If >3 files, cross-module changes, or core logic changes, write detailed sub-steps in TODO.md and launch an L3 worker + inspector (Sonnet). Do NOT skip planning. Do NOT split large changes into multiple small commits to bypass the rule. A git pre-commit hook enforces this. Run `export CLAUDE_AGENT_LEVEL=L2` at session start.
+
 Follow the session start/end checklists for your level (Section 5) and research experiment rules (Section 7) in AGENT_PLAYBOOK.md.
 
 ## Purpose
