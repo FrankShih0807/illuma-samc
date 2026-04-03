@@ -591,16 +591,20 @@ class SAMC:
         if sample_bins:
             bin_idx = torch.tensor(sample_bins, dtype=torch.long)
             in_range = bin_idx >= 0
-            sample_log_w = torch.full((len(sample_bins),), float("-inf"), device=device)
+            sample_log_w = torch.full(
+                (len(sample_bins),), float("-inf"), device=device, dtype=self._dtype
+            )
             if in_range.any():
                 valid_bins = bin_idx[in_range]
                 visited_mask = counts[valid_bins] > 0
                 # Create a sub-mask for in-range samples that were also visited
                 in_range_indices = in_range.nonzero(as_tuple=True)[0]
                 visited_indices = in_range_indices[visited_mask]
-                sample_log_w[visited_indices] = theta[bin_idx[visited_indices]].float().to(device)
+                sample_log_w[visited_indices] = theta[bin_idx[visited_indices]].to(
+                    device=device, dtype=self._dtype
+                )
         else:
-            sample_log_w = torch.empty(0, device=device)
+            sample_log_w = torch.empty(0, device=device, dtype=self._dtype)
 
         return SAMCResult(
             samples=samples_tensor,
@@ -880,7 +884,7 @@ class SAMC:
             bin_idx = torch.tensor(sample_bins_per_step, dtype=torch.long)
             in_range = bin_idx >= 0
             sample_log_w = torch.full_like(
-                bin_idx, float("-inf"), dtype=torch.float32, device=device
+                bin_idx, float("-inf"), dtype=self._dtype, device=device
             )
             if in_range.any():
                 valid_bins = bin_idx[in_range]
@@ -890,10 +894,12 @@ class SAMC:
                 visited_flat = in_range_flat[visited_mask]
                 for idx in visited_flat:
                     r, c = idx[0].item(), idx[1].item()
-                    sample_log_w[r, c] = theta[bin_idx[r, c]].float().to(device)
+                    sample_log_w[r, c] = theta[bin_idx[r, c]].to(
+                        device=device, dtype=self._dtype
+                    )
             sample_log_w = sample_log_w.permute(1, 0)  # (N, n_saved)
         else:
-            sample_log_w = torch.empty(n_chains, 0, device=device)
+            sample_log_w = torch.empty(n_chains, 0, device=device, dtype=self._dtype)
 
         # energy_history: list of (N,) → (n_steps, N) on device
         energy_tensor = torch.stack(energy_history).to(device)  # (n_steps, N)

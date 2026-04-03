@@ -693,15 +693,17 @@ Run: `ruff format . && ruff check . && pytest -x -q`
 ### Step 59: Inspector review (Inspector)
 
 Inspector verifies Steps 55-58:
-- [ ] All new tests actually test what they claim (read test code, not just names)
-- [ ] `dtype` parameter works end-to-end: config → sampler → result tensors
-- [ ] `device` parameter works end-to-end: config → partitions → sampler → result tensors
-- [ ] Baselines accept and propagate device/dtype correctly
-- [ ] No hardcoded `torch.float32` or `torch.float64` in tensor creation that should use the user's dtype
-- [ ] Internal accumulation (theta, counts) stays float64 regardless of user dtype
-- [ ] All tests pass: `pytest -x -q`
-- [ ] Lint clean: `ruff check .`
-- [ ] Existing MPS tests still pass (if MPS available)
+- [x] All new tests actually test what they claim (read test code, not just names)
+- [x] `dtype` parameter works end-to-end: config → sampler → result tensors
+- [x] `device` parameter works end-to-end: config → partitions → sampler → result tensors
+- [x] Baselines accept and propagate device/dtype correctly
+- [x] No hardcoded `torch.float32` or `torch.float64` in tensor creation that should use the user's dtype
+- [x] Internal accumulation (theta, counts) stays float64 regardless of user dtype
+- [x] All tests pass: `pytest -x -q`
+- [x] Lint clean: `ruff check .`
+- [x] Existing MPS tests still pass (if MPS available)
+
+**Inspector found:** `sample_log_weights` hardcoded to float32 in 3 code paths (sampler.py lines 594, 601, 883, 893). L2 fixed + added 4 dtype tests. 183 tests pass.
 
 ## Phase 6: PyPI Release
 

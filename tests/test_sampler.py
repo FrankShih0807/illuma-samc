@@ -963,3 +963,27 @@ class TestDtypeDevice:
         sampler = self._make_sampler()
         result = sampler.run(n_steps=50, progress=False, seed=42)
         assert result.energy_history.device.type == "cpu"
+
+    def test_sample_log_weights_dtype_float64(self):
+        """sample_log_weights respects dtype='float64'."""
+        sampler = self._make_sampler(dtype="float64")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float64
+
+    def test_sample_log_weights_dtype_default(self):
+        """sample_log_weights defaults to float32."""
+        sampler = self._make_sampler()
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float32
+
+    def test_sample_log_weights_dtype_multi_chain_shared(self):
+        """sample_log_weights dtype propagates in shared multi-chain."""
+        sampler = self._make_sampler(dtype="float64", n_chains=2, shared_weights=True)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float64
+
+    def test_sample_log_weights_dtype_multi_chain_independent(self):
+        """sample_log_weights dtype propagates in independent multi-chain."""
+        sampler = self._make_sampler(dtype="float64", n_chains=2)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float64
