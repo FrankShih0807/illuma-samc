@@ -139,20 +139,16 @@ class TestUXWarnings:
 
     def test_all_partitions_have_edges(self):
         from illuma_samc.partitions import (
-            AdaptivePartition,
+            ExpandablePartition,
             Partition,
-            QuantilePartition,
             UniformPartition,
         )
 
         u = UniformPartition(0.0, 10.0, 5)
         assert isinstance(u.edges, torch.Tensor)
 
-        a = AdaptivePartition(0.0, 10.0, 5)
-        assert isinstance(a.edges, torch.Tensor)
-
-        q = QuantilePartition(torch.linspace(0, 10, 100), 5)
-        assert isinstance(q.edges, torch.Tensor)
+        e = ExpandablePartition(0.0, 10.0, 5)
+        assert isinstance(e.edges, torch.Tensor)
 
         # Check that Partition base class has edges as abstract property
         assert hasattr(Partition, "edges")
@@ -593,7 +589,7 @@ class TestMultiChain:
         )
         single_result = single.run(n_steps=5000, progress=False)
 
-        # Multi-chain (same total work: fewer steps but more chains)
+        # Multi-chain shared weights (same total work: fewer steps but more chains)
         torch.manual_seed(99)
         multi = SAMC(
             energy_fn=_quadratic_energy_batch,
@@ -604,6 +600,7 @@ class TestMultiChain:
             proposal_std=0.3,
             gain="1/t",
             gain_kwargs={"t0": 200},
+            shared_weights=True,
         )
         x0 = torch.randn(4, 2)
         multi_result = multi.run(n_steps=5000, x0=x0, progress=False)
@@ -611,6 +608,48 @@ class TestMultiChain:
         # Both should find energy near 0 (quadratic minimum)
         assert single_result.best_energy < 1.0
         assert multi_result.best_energy < 1.0
+
+    def test_independent_chains_basic(self):
+        """n_chains > 1 with default shared_weights=False runs independent chains."""
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_chains=2,
+            n_partitions=10,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=500, save_every=10, progress=False)
+
+        # Independent chains: same output shapes as shared-weights mode
+        assert result.samples.shape == (2, 50, 2)
+        assert result.sample_log_weights.shape == (2, 50)
+        assert result.energy_history.shape == (500, 2)
+        assert result.log_weights.shape == (10,)
+        assert result.bin_counts.shape == (10,)
+        assert 0.0 <= result.acceptance_rate <= 1.0
+        assert result.best_x.shape == (2,)
+        assert result.best_energy < float("inf")
+
+    def test_independent_chains_find_minimum(self):
+        """Independent chains should find the quadratic minimum."""
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_chains=3,
+            n_partitions=10,
+            e_min=-5.0,
+            e_max=5.0,
+            proposal_std=0.5,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=5000, progress=False)
+        assert result.best_energy < 0.5
 
 
 class TestGPU:
@@ -796,3 +835,155 @@ class TestAdditionalCoverage:
         import matplotlib.pyplot as plt
 
         plt.close(fig)
+
+
+class TestAdaptiveProposal:
+    """Integration tests for adaptive proposal tuning in SAMC."""
+
+    def test_adapt_recovers_from_bad_step_size(self):
+        """SAMC with adaptive proposal should recover from a bad initial step size.
+
+        Start with proposal_std=5.0 (way too large for this problem).
+        Adaptive should tune it down and achieve reasonable acceptance rate.
+        """
+
+        def quadratic(x: torch.Tensor) -> torch.Tensor:
+            return 0.5 * torch.sum(x**2)
+
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=quadratic,
+            dim=2,
+            n_partitions=20,
+            e_min=0.0,
+            e_max=10.0,
+            proposal_std=5.0,
+            adapt_proposal=True,
+            adapt_warmup=500,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=5000, progress=False)
+        # With adaptation, acceptance rate should be reasonable (> 10%)
+        assert result.acceptance_rate > 0.10
+        # Step size should have decreased from 5.0
+        assert sampler._proposal.step_size < 5.0
+
+    def test_adapt_flag_passed_through(self):
+        """adapt_proposal=True creates an adaptive GaussianProposal."""
+        sampler = SAMC(
+            energy_fn=lambda x: 0.5 * x.sum() ** 2,
+            dim=2,
+            adapt_proposal=True,
+            adapt_warmup=200,
+            target_accept_rate=0.4,
+        )
+        assert sampler._proposal._adapt is True
+        assert sampler._proposal._adapt_warmup == 200
+        assert sampler._proposal._target_rate == 0.4
+
+    def test_no_adapt_by_default(self):
+        """Default SAMC should not adapt."""
+        sampler = SAMC(
+            energy_fn=lambda x: 0.5 * x.sum() ** 2,
+            dim=2,
+        )
+        assert sampler._proposal._adapt is False
+
+
+class TestDtypeDevice:
+    """Tests for dtype and device parameter propagation."""
+
+    @staticmethod
+    def _quadratic(x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 1:
+            return 0.5 * torch.sum(x**2)
+        return 0.5 * torch.sum(x**2, dim=-1)
+
+    def _make_sampler(self, **kwargs):
+        defaults = dict(
+            energy_fn=self._quadratic,
+            dim=2,
+            n_partitions=5,
+            e_min=0.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        defaults.update(kwargs)
+        return SAMC(**defaults)
+
+    def test_dtype_float64_samples(self):
+        """SAMC(dtype='float64') produces float64 samples."""
+        sampler = self._make_sampler(dtype="float64")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float64
+
+    def test_dtype_float32_default(self):
+        """SAMC with no dtype argument defaults to float32 samples."""
+        sampler = self._make_sampler()
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float32
+
+    def test_dtype_torch_object(self):
+        """dtype=torch.float32 also accepted."""
+        sampler = self._make_sampler(dtype=torch.float32)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float32
+
+    def test_x0_cast_to_dtype(self):
+        """float32 x0 is cast to float64 when dtype='float64'."""
+        sampler = self._make_sampler(dtype="float64")
+        x0 = torch.randn(2)  # float32
+        assert x0.dtype == torch.float32
+        result = sampler.run(n_steps=50, x0=x0, progress=False)
+        assert result.samples.dtype == torch.float64
+
+    def test_multi_chain_dtype_propagation(self):
+        """Multi-chain SAMC propagates dtype to all chain samples."""
+        sampler = self._make_sampler(dtype="float64", n_chains=2)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float64
+        assert result.samples.shape[0] == 2
+
+    def test_log_weights_always_float64(self):
+        """Internal log_weights stay float64 regardless of user dtype."""
+        sampler = self._make_sampler(dtype="float32")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.log_weights.dtype == torch.float64
+
+    def test_log_weights_float64_when_dtype_float64(self):
+        """log_weights also float64 when user requests float64."""
+        sampler = self._make_sampler(dtype="float64")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.log_weights.dtype == torch.float64
+
+    def test_energy_history_on_cpu(self):
+        """energy_history is on CPU for CPU sampler."""
+        sampler = self._make_sampler()
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.energy_history.device.type == "cpu"
+
+    def test_sample_log_weights_dtype_float64(self):
+        """sample_log_weights respects dtype='float64'."""
+        sampler = self._make_sampler(dtype="float64")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float64
+
+    def test_sample_log_weights_dtype_default(self):
+        """sample_log_weights defaults to float32."""
+        sampler = self._make_sampler()
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float32
+
+    def test_sample_log_weights_dtype_multi_chain_shared(self):
+        """sample_log_weights dtype propagates in shared multi-chain."""
+        sampler = self._make_sampler(dtype="float64", n_chains=2, shared_weights=True)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float64
+
+    def test_sample_log_weights_dtype_multi_chain_independent(self):
+        """sample_log_weights dtype propagates in independent multi-chain."""
+        sampler = self._make_sampler(dtype="float64", n_chains=2)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.sample_log_weights.dtype == torch.float64

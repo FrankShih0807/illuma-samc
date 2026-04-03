@@ -30,6 +30,9 @@ def main():
     matplotlib.use("Agg")
     torch.manual_seed(42)
 
+    # GPU usage: pass device="cuda" or device="mps" (Apple Silicon).
+    # dtype="float32" is the default; use dtype="float64" for extra precision on CPU.
+    # Example: SAMC(..., device="mps", dtype="float32")
     print("Running SAMC on 4-mode Gaussian mixture...")
     sampler = SAMC(
         energy_fn=gaussian_mixture_energy,

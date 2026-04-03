@@ -4,13 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-04-03
+
+### Changed
+- **Breaking:** `SAMC` multi-chain now defaults to independent weights (`shared_weights=False`). Pass `shared_weights=True` for previous behavior.
+- **Breaking:** Default `bin_width` changed from 0.25 to 0.5 for both `SAMC` and `SAMCWeights`. Better performance on high-dimensional problems.
+- Removed `AdaptivePartition`, `QuantilePartition`, `GrowingPartition` — only `UniformPartition` and `ExpandablePartition` remain.
+- Removed `SAMCWeights.auto()` and `SAMCWeights.from_warmup()` factory methods — use `SAMCWeights()` with expand-on-demand instead.
+- Simplified `benchmarks/three_way.py` to 3-way fair comparison (MH vs PT vs SAMC default).
+
+### Added
+- `shared_weights` parameter on `SAMC.__init__` to choose between independent and shared weight modes.
+- 5-seed benchmark with tighter error bars.
+
 ## [0.2.0] - 2026-04-02
 
 ### Changed
 - `SAMCWeights` now uses traditional `__init__` with zero-config defaults (lazy partition init on first energy seen)
 - Default partition is `ExpandablePartition`: 201 uniform bins (100 above + center + 100 below first energy), expands on overflow
 - `flatness()` now computes over visited bins only (avoids penalizing unreachable bins)
-- Trimmed public API to `UniformPartition` and `GrowingPartition` only (removed `AdaptivePartition`, `QuantilePartition`)
+- Trimmed public API to `UniformPartition` and `ExpandablePartition` (removed `AdaptivePartition`, `QuantilePartition`)
 - README rewritten for clarity: leads with practical value, simplified math, tighter FAQ
 
 ### Added

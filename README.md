@@ -30,36 +30,6 @@ for t in range(1, n_steps + 1):
 
 That's it. No energy range needed -- bins are created automatically on the first step and expand as the sampler explores.
 
-Works batched too -- pass tensors instead of scalars:
-
-```python
-wm = SAMCWeights()
-
-# z: (N, dim) -- batch of N states
-# energy, energy_prop: (N,) -- one scalar energy per state
-for t in range(1, n_steps + 1):
-    z_prop = z + 0.25 * torch.randn_like(z)       # (N, dim)
-    energy_prop = energy_fn(z_prop)                # (N,)
-
-    log_alpha = (-energy_prop + energy) / T + wm.correction(energy, energy_prop)  # (N,)
-    accept = torch.rand_like(log_alpha).log() < log_alpha                         # (N,)
-
-    z = torch.where(accept.unsqueeze(-1), z_prop, z)   # (N, dim)
-    energy = torch.where(accept, energy_prop, energy)   # (N,)
-    wm.step(t, energy)                                  # (N,)
-```
-
-If you know your energy range, pass a `UniformPartition` for precise control:
-
-```python
-from illuma_samc import SAMCWeights, UniformPartition, GainSequence
-
-wm = SAMCWeights(
-    partition=UniformPartition(e_min=0, e_max=10, n_bins=40),
-    gain=GainSequence("1/t", t0=1000),
-)
-```
-
 ### The Payoff
 
 |                  |         MH |       SAMC |
@@ -93,69 +63,36 @@ def energy_fn(x):
         0.5 * torch.sum((x + 2) ** 2),
     )
 
-sampler = SAMC(energy_fn=energy_fn, dim=2)
+sampler = SAMC(energy_fn=energy_fn, dim=2, n_chains=4, adapt_proposal=True)
 result = sampler.run(n_steps=100_000)
 
 print(f"Best energy: {result.best_energy:.4f}")
 print(f"Acceptance rate: {result.acceptance_rate:.3f}")
 ```
 
-Multi-chain with shared weights:
+## High-Dimensional Comparison
 
-```python
-sampler = SAMC(energy_fn=energy_fn, dim=2, n_chains=4)
-result = sampler.run(n_steps=100_000)
-# result.samples has shape (4, n_saved, dim)
-```
+Best energy found, 200K iterations x 4 chains, 5 seeds. All algorithms use identical compute budgets (800K energy evals), same starting points, and adaptive proposals. SAMC is zero-config.
 
-Full control over proposal, partition, and gain:
+| Problem | Dim | MH | PT | SAMC (default) |
+|---------|-----|----|----|----------------|
+| 10D Gaussian Mixture | 10 | **0.24** | 0.27 | 0.31 |
+| 50D Gaussian Mixture | 50 | 8.99 | 9.61 | **3.43** |
+| 100D Gaussian Mixture | 100 | 24.64 | 27.20 | **13.40** |
+| Rastrigin 20D | 20 | 22.86 | **19.34** | 21.29 |
 
-```python
-from illuma_samc import SAMC, GainSequence, GaussianProposal, UniformPartition
+Lower is better. Bold = best per row. SAMC achieves **2.6x better energy than MH at 50D** and **1.8x better at 100D**, without any tuning. See `benchmarks/three_way.py` for the reproducible benchmark.
 
-sampler = SAMC(
-    energy_fn=energy_fn,
-    dim=2,
-    proposal_fn=GaussianProposal(step_size=0.5),
-    partition_fn=UniformPartition(e_min=0, e_max=10, n_bins=40),
-    gain=GainSequence("1/t", t0=1000),
-    temperature=0.1,
-)
-result = sampler.run(n_steps=100_000, burn_in=100)
-sampler.plot_diagnostics()
-```
+## Documentation
 
-## How It Works
+For full documentation including tutorials, tuning guide, and API reference:
 
-SAMC partitions the energy space into $m$ subregions and learns **log-density-of-states estimates** $\theta_t$ that flatten the energy histogram. The MH acceptance ratio gains a weight correction:
-
-$$\alpha = \min\left(1,\; \exp\left(\theta_{J(\mathbf{x})} - \theta_{J(\mathbf{y})} - \frac{U(\mathbf{y}) - U(\mathbf{x})}{T}\right)\right)$$
-
-where $J(\mathbf{x})$ is the subregion index. After each step, the weights update via stochastic approximation:
-
-$$\theta_{t+1} = \theta_t + \gamma_{t+1}(\mathbf{e}_{t+1} - \boldsymbol{\pi})$$
-
-where $\gamma_t$ is a decreasing gain sequence, $\mathbf{e}_{t+1}$ is the indicator for the occupied subregion, and $\boldsymbol{\pi}$ is the desired visit frequency (uniform by default). As $\theta$ converges, the sampler visits all energy levels equally, escaping any local trap.
-
-**Recovering the target distribution.** SAMC samples from a flattened distribution. Reweight each sample by $\exp(\theta_{J(\mathbf{x})})$ to recover the original target, or call `resample()` for unweighted draws.
-
-## FAQ
-
-**Q: How do I choose the energy range?**
-
-A: You don't have to. `SAMCWeights()` auto-creates bins centered on the first energy it sees and expands as needed. If you know the range, pass `partition=UniformPartition(...)` for tighter bins.
-
-**Q: Can I use SAMC for Bayesian posterior sampling?**
-
-A: Yes. Set `energy_fn = -log p(x | data) - log p(x)`. Call `resample()` to recover unweighted posterior draws. Especially useful for multimodal posteriors where standard MCMC gets trapped.
-
-**Q: What temperature should I use?**
-
-A: Start with $T = 1.0$ for exploration, lower it (e.g., $T = 0.1$) to concentrate around the best solutions. Low temperature is exactly where MH gets trapped and SAMC shines.
-
-**Q: `SAMC` vs `SAMCWeights`?**
-
-A: **`SAMCWeights`** drops into your existing MH loop -- you control the proposal and acceptance. **`SAMC`** is batteries-included -- handles the loop, proposals, diagnostics, and burn-in.
+- [**Quickstart**](docs/quickstart.rst) -- usage patterns for `SAMC` and `SAMCWeights`
+- [**Tuning Guide**](docs/tuning.rst) -- parameter sensitivity, energy range selection, when to use SAMC vs MH
+- [**How It Works**](docs/how_it_works.rst) -- the SAMC algorithm explained with math
+- [**FAQ**](docs/faq.rst) -- energy range, Bayesian posteriors, temperature, multi-chain
+- **Tutorials:** [Drop-in SAMCWeights](docs/tutorials/drop_in.rst) | [Multi-chain](docs/tutorials/multi_chain.rst) | [Bayesian inference](docs/tutorials/bayesian.rst)
+- [**API Reference**](docs/api.rst) -- full class and method documentation
 
 ## References
 

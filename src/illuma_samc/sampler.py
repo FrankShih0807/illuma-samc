@@ -10,7 +10,7 @@ from typing import Callable
 import torch
 
 from illuma_samc.gain import GainSequence
-from illuma_samc.partitions import Partition, UniformPartition
+from illuma_samc.partitions import ExpandablePartition, Partition, UniformPartition
 from illuma_samc.proposals import GaussianProposal, Proposal
 
 try:
@@ -104,6 +104,12 @@ class SAMC:
         Energy function ``Tensor -> Tensor`` (scalar). Required for simple mode.
     dim : int
         Dimensionality of the sample space.
+    n_chains : int
+        Number of parallel chains. Default 1.
+    shared_weights : bool
+        When ``n_chains > 1``, whether all chains share a single theta vector.
+        Default ``False`` (each chain runs independently with its own weights).
+        Set ``True`` to use the shared-weights multi-chain mode (original behavior).
     n_partitions : int
         Number of energy bins (simple mode with explicit range).
     e_min : float, optional
@@ -121,6 +127,9 @@ class SAMC:
         Gain schedule. Defaults to ``"ramp"`` matching sample_code.py.
     device : str or torch.device
         Device for tensors.
+    dtype : str or torch.dtype
+        Dtype for sample tensors (e.g. ``torch.float32``, ``"float64"``).
+        Internal accumulation (theta, counts) always uses float64.
     proposal_fn : Proposal, optional
         Custom proposal (flexible mode).
     log_accept_fn : callable, optional
@@ -140,14 +149,19 @@ class SAMC:
         *,
         dim: int,
         n_chains: int = 1,
+        shared_weights: bool = False,
         n_partitions: int = 42,
         n_bins: int | None = None,
         e_min: float = _UNSET,
         e_max: float = _UNSET,
         proposal_std: float = 0.25,
+        adapt_proposal: bool = False,
+        target_accept_rate: float = 0.35,
+        adapt_warmup: int = 1000,
         temperature: float = 1.0,
         gain: GainSequence | str = "ramp",
         device: str | torch.device = "cpu",
+        dtype: str | torch.dtype = torch.float32,
         proposal_fn: Proposal | None = None,
         log_accept_fn: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], float]
         | None = None,
@@ -185,33 +199,57 @@ class SAMC:
             raise ValueError("temperature must be positive")
 
         self._device = torch.device(device)
+        self._dtype = dtype if isinstance(dtype, torch.dtype) else getattr(torch, dtype)
+        if self._device.type == "mps" and self._dtype == torch.float64:
+            raise ValueError(
+                "MPS does not support float64. Use dtype='float32' (or omit dtype)"
+                " with device='mps'."
+            )
         self._dim = dim
         self._n_chains = n_chains
+        self._shared_weights = shared_weights
         self._temperature = temperature
 
         # --- Energy function ---
         self._energy_fn = energy_fn
 
         # --- Proposal ---
+        # Save proposal init params for resetting in independent multi-chain mode
+        self._proposal_fn_orig = proposal_fn
+        self._proposal_std_orig = proposal_std
+        self._adapt_proposal_orig = adapt_proposal
+        self._target_accept_rate_orig = target_accept_rate
+        self._adapt_warmup_orig = adapt_warmup
         if proposal_fn is not None:
             self._proposal = proposal_fn
         else:
-            self._proposal = GaussianProposal(step_size=proposal_std)
+            self._proposal = GaussianProposal(
+                step_size=proposal_std,
+                adapt=adapt_proposal,
+                target_rate=target_accept_rate,
+                adapt_warmup=adapt_warmup,
+            )
 
         # --- Acceptance ---
         self._log_accept_fn = log_accept_fn
 
         # --- Partition ---
-        self._auto_range = False
+        self._deferred_partition = False
+        # Save partition init params for resetting in independent multi-chain mode
+        self._partition_fn_orig = partition_fn
+        self._user_set_range = user_set_range
+        self._e_min_orig = e_min
+        self._e_max_orig = e_max
+        self._n_partitions_orig = n_partitions
         if partition_fn is not None:
             self._partition = partition_fn
         elif user_set_range:
             self._partition = UniformPartition(e_min, e_max, n_partitions)
         else:
-            # Auto-range: will run a warmup to discover energy range before main loop
-            self._auto_range = True
-            self._auto_n_partitions = n_partitions
-            self._partition = UniformPartition(e_min, e_max, n_partitions)  # placeholder
+            # Deferred: create ExpandablePartition centered on first energy seen
+            self._deferred_partition = True
+            self._deferred_n_partitions = n_partitions
+            self._partition = None  # type: ignore[assignment]
 
         # --- Gain ---
         if isinstance(gain, GainSequence):
@@ -220,7 +258,7 @@ class SAMC:
             kw = gain_kwargs or {}
             self._gain = GainSequence(gain, **kw)
 
-        self._n_partitions = self._partition.n_partitions
+        self._n_partitions = 0 if self._deferred_partition else self._partition.n_partitions
 
         # --- State (populated by run()) ---
         self.log_weights: torch.Tensor | None = None
@@ -230,6 +268,27 @@ class SAMC:
         self.best_x: torch.Tensor | None = None
         self.best_energy: float = float("inf")
         self._samples: list[torch.Tensor] = []
+
+    def _init_partition_from_energy(self, energy: float) -> None:
+        """Create ExpandablePartition centered on first energy (deferred init).
+
+        Uses the same defaults as SAMCWeights: bin_width=0.5, 100 bins
+        per side (201 total), max_bins=1000.
+        """
+        bin_width = 0.5
+        n_bins_per_side = 100
+        n_bins = 2 * n_bins_per_side + 1
+        half = n_bins_per_side * bin_width
+        e_min = energy - half - bin_width / 2
+        e_max = energy + half + bin_width / 2
+        self._partition = ExpandablePartition(
+            e_min=e_min,
+            e_max=e_max,
+            n_bins=n_bins,
+            max_bins=1000,
+        )
+        self._deferred_partition = False
+        self._n_partitions = self._partition.n_partitions
 
     def _compute_energy(self, x: torch.Tensor) -> tuple[torch.Tensor, bool]:
         """Compute energy for a single state. Returns (energy_scalar, in_region)."""
@@ -270,13 +329,32 @@ class SAMC:
         """
         if self._energy_fn is None:
             raise RuntimeError("No energy_fn provided — cannot compute energy")
+        n = x.shape[0]
         result = self._energy_fn(x)
-        if isinstance(result, tuple):
-            energy, in_region = result
+        is_tuple = isinstance(result, tuple)
+        energy = result[0] if is_tuple else result
+        energy = energy.view(-1)
+
+        # If energy_fn doesn't support batched input (returned fewer elements
+        # than N), fall back to per-sample evaluation.
+        if energy.numel() != n:
+            energies = []
+            in_regions = []
+            for i in range(n):
+                e, ir = self._compute_energy(x[i])
+                energies.append(e)
+                in_regions.append(ir)
+            return (
+                torch.stack(energies),
+                torch.tensor(in_regions, dtype=torch.bool, device=x.device),
+            )
+
+        if is_tuple:
+            in_region = result[1]
             if not isinstance(in_region, torch.Tensor):
                 in_region = torch.tensor(in_region, dtype=torch.bool, device=x.device)
-            return energy.view(-1), in_region.view(-1).bool()
-        return result.view(-1), torch.ones(x.shape[0], dtype=torch.bool, device=x.device)
+            return energy, in_region.view(-1).bool()
+        return energy, torch.ones(n, dtype=torch.bool, device=x.device)
 
     def run(
         self,
@@ -296,7 +374,7 @@ class SAMC:
             Number of MCMC iterations.
         x0 : Tensor, optional
             Initial state. Shape ``(dim,)`` for single chain or ``(N, dim)``
-            for *N* parallel chains with shared weights.  When ``n_chains > 1``
+            for *N* parallel chains.  When ``n_chains > 1``
             and ``x0`` is omitted, a zero tensor of shape ``(n_chains, dim)``
             is created automatically.
         save_every : int
@@ -311,7 +389,8 @@ class SAMC:
         -------
         SAMCResult
             For single chain, ``samples`` has shape ``(n_saved, dim)``.
-            For multi-chain, ``samples`` has shape ``(N, n_saved, dim)``.
+            For multi-chain (both independent and shared), ``samples`` has
+            shape ``(N, n_saved, dim)``.
         """
         if seed is not None:
             torch.manual_seed(seed)
@@ -331,10 +410,17 @@ class SAMC:
                 f"Either match x0 shape or omit x0 to auto-initialize."
             )
         if n_chains > 1 and x0 is None:
-            x0 = torch.zeros(n_chains, self._dim, device=self._device)
+            x0 = torch.zeros(n_chains, self._dim, device=self._device, dtype=self._dtype)
 
         if n_chains > 1:
-            result = self._run_multi_chain(n_steps, x0, save_every=save_every, progress=progress)
+            if self._shared_weights:
+                result = self._run_multi_chain(
+                    n_steps, x0, save_every=save_every, progress=progress
+                )
+            else:
+                result = self._run_independent_chains(
+                    n_steps, x0, n_chains=n_chains, save_every=save_every, progress=progress
+                )
         else:
             result = self._run_single_chain(n_steps, x0, save_every=save_every, progress=progress)
 
@@ -363,31 +449,16 @@ class SAMC:
         device = self._device
 
         # Initialize state
-        x = x0.to(device).clone() if x0 is not None else torch.zeros(self._dim, device=device)
-
-        # Auto-range: run a short MH warmup to discover energy range
-        if self._auto_range:
-            warmup_energies = []
-            x_warmup = x.clone()
-            fx_warmup, _ = self._compute_energy(x_warmup)
-            warmup_energies.append(fx_warmup.item())
-            for _ in range(2000):
-                x_new = self._proposal.propose(x_warmup)
-                fy, in_reg = self._compute_energy(x_new)
-                log_r = (-fy.item() + fx_warmup.item()) / self._temperature
-                if in_reg and (log_r > 0 or torch.rand(1).item() < math.exp(min(log_r, 0))):
-                    x_warmup = x_new
-                    fx_warmup = fy
-                warmup_energies.append(fx_warmup.item())
-            e_min_auto = min(warmup_energies)
-            e_max_auto = max(warmup_energies)
-            margin = max(0.1 * (e_max_auto - e_min_auto), 0.5)
-            self._partition = UniformPartition(
-                e_min_auto - margin, e_max_auto + margin, self._auto_n_partitions
-            )
-            self._n_partitions = self._partition.n_partitions
+        if x0 is not None:
+            x = x0.to(device=device, dtype=self._dtype).clone()
+        else:
+            x = torch.zeros(self._dim, device=device, dtype=self._dtype)
 
         fx, in_region = self._compute_energy(x)
+
+        # Deferred partition: create ExpandablePartition centered on first energy
+        if self._deferred_partition:
+            self._init_partition_from_energy(fx.item())
         fx_val = fx.item()
 
         # Warn if initial state is out of partition range
@@ -400,9 +471,9 @@ class SAMC:
                 stacklevel=3,
             )
 
-        # Theta (log weights) and counts
-        theta = torch.zeros(self._n_partitions, device=device, dtype=torch.float64)
-        counts = torch.zeros(self._n_partitions, device=device, dtype=torch.float64)
+        # Theta (log weights) and counts — always on CPU (small vector, MPS lacks float64)
+        theta = torch.zeros(self._n_partitions, dtype=torch.float64)
+        counts = torch.zeros(self._n_partitions, dtype=torch.float64)
         refden = 1.0 / self._n_partitions
 
         def _sync_size() -> None:
@@ -411,8 +482,8 @@ class SAMC:
             n = self._partition.n_partitions
             if n > len(theta):
                 pad = n - len(theta)
-                theta = torch.cat([theta, torch.zeros(pad, dtype=theta.dtype, device=device)])
-                counts = torch.cat([counts, torch.zeros(pad, dtype=counts.dtype, device=device)])
+                theta = torch.cat([theta, torch.zeros(pad, dtype=theta.dtype)])
+                counts = torch.cat([counts, torch.zeros(pad, dtype=counts.dtype)])
                 refden = 1.0 / n
 
         best_x = x.clone()
@@ -476,6 +547,10 @@ class SAMC:
                 theta[k1] += delta
                 counts[k1] += 1
 
+            # Feed back to adaptive proposal
+            if hasattr(self._proposal, "report_accept"):
+                self._proposal.report_accept(accept)
+
             if fx_val < best_energy:
                 best_energy = fx_val
                 best_x = x.clone()
@@ -503,7 +578,9 @@ class SAMC:
             )
 
         samples_tensor = (
-            torch.stack(samples) if samples else torch.empty(0, self._dim, device=device)
+            torch.stack(samples)
+            if samples
+            else torch.empty(0, self._dim, device=device, dtype=self._dtype)
         )
 
         # Per-sample importance log-weights: +theta[bin] reweights from flat to target.
@@ -514,16 +591,20 @@ class SAMC:
         if sample_bins:
             bin_idx = torch.tensor(sample_bins, dtype=torch.long)
             in_range = bin_idx >= 0
-            sample_log_w = torch.full((len(sample_bins),), float("-inf"), device=device)
+            sample_log_w = torch.full(
+                (len(sample_bins),), float("-inf"), device=device, dtype=self._dtype
+            )
             if in_range.any():
                 valid_bins = bin_idx[in_range]
                 visited_mask = counts[valid_bins] > 0
                 # Create a sub-mask for in-range samples that were also visited
                 in_range_indices = in_range.nonzero(as_tuple=True)[0]
                 visited_indices = in_range_indices[visited_mask]
-                sample_log_w[visited_indices] = theta[bin_idx[visited_indices]].float().to(device)
+                sample_log_w[visited_indices] = theta[bin_idx[visited_indices]].to(
+                    device=device, dtype=self._dtype
+                )
         else:
-            sample_log_w = torch.empty(0, device=device)
+            sample_log_w = torch.empty(0, device=device, dtype=self._dtype)
 
         return SAMCResult(
             samples=samples_tensor,
@@ -534,6 +615,98 @@ class SAMC:
             acceptance_rate=accept_count / n_steps,
             best_x=best_x.clone(),
             best_energy=best_energy,
+        )
+
+    def _reset_partition_and_proposal(self) -> None:
+        """Reset partition and proposal to initial state for a fresh chain run.
+
+        Used by independent multi-chain mode so each chain starts with a clean
+        partition (no deferred state leaked from a previous chain).
+        """
+        if self._proposal_fn_orig is not None:
+            self._proposal = self._proposal_fn_orig
+        else:
+            self._proposal = GaussianProposal(
+                step_size=self._proposal_std_orig,
+                adapt=self._adapt_proposal_orig,
+                target_rate=self._target_accept_rate_orig,
+                adapt_warmup=self._adapt_warmup_orig,
+            )
+
+        if self._partition_fn_orig is not None:
+            self._partition = self._partition_fn_orig
+            self._deferred_partition = False
+        elif self._user_set_range:
+            self._partition = UniformPartition(
+                self._e_min_orig, self._e_max_orig, self._n_partitions_orig
+            )
+            self._deferred_partition = False
+        else:
+            self._deferred_partition = True
+            self._partition = None  # type: ignore[assignment]
+
+        self._n_partitions = 0 if self._deferred_partition else self._partition.n_partitions
+
+    def _run_independent_chains(
+        self,
+        n_steps: int,
+        x0: torch.Tensor,
+        *,
+        n_chains: int,
+        save_every: int = 100,
+        progress: bool = True,
+    ) -> SAMCResult:
+        """Run N independent chains, each with its own partition and weights.
+
+        Results are aggregated: best_energy = min, acceptance_rate = mean,
+        samples stacked to (N, n_saved, dim), log_weights/bin_counts from the
+        chain with the lowest best_energy.
+        """
+        all_results: list[SAMCResult] = []
+
+        for c in range(n_chains):
+            self._reset_partition_and_proposal()
+            chain_x0 = x0[c] if x0 is not None else None
+            chain_progress = progress and (c == 0)  # show bar for first chain only
+            r = self._run_single_chain(
+                n_steps, chain_x0, save_every=save_every, progress=chain_progress
+            )
+            all_results.append(r)
+
+        # --- Aggregate ---
+        best_idx = int(min(range(n_chains), key=lambda i: all_results[i].best_energy))
+        best_result = all_results[best_idx]
+
+        # samples: (N, n_saved, dim)
+        samples_list = [r.samples for r in all_results]
+        # Each r.samples is (n_saved, dim); stack to (N, n_saved, dim)
+        samples_tensor = torch.stack(samples_list, dim=0)
+
+        # sample_log_weights: (N, n_saved)
+        slw_tensor = torch.stack([r.sample_log_weights for r in all_results], dim=0)
+
+        # energy_history: (n_steps, N) — stack per-chain (n_steps,) histories
+        energy_tensor = torch.stack([r.energy_history for r in all_results], dim=1)
+
+        acceptance_rate = sum(r.acceptance_rate for r in all_results) / n_chains
+
+        # Update sampler state from best chain
+        self.log_weights = best_result.log_weights
+        self.energy_history = best_result.energy_history.tolist()
+        self.bin_counts = best_result.bin_counts
+        self.acceptance_rate = acceptance_rate
+        self.best_x = best_result.best_x
+        self.best_energy = best_result.best_energy
+
+        return SAMCResult(
+            samples=samples_tensor,
+            log_weights=best_result.log_weights.clone(),
+            sample_log_weights=slw_tensor,
+            energy_history=energy_tensor,
+            bin_counts=best_result.bin_counts.clone(),
+            acceptance_rate=acceptance_rate,
+            best_x=best_result.best_x.clone(),
+            best_energy=best_result.best_energy,
         )
 
     def _run_multi_chain(
@@ -554,31 +727,13 @@ class SAMC:
         n_chains = x0.shape[0]
 
         # Initialize states — shape (N, dim)
-        x = x0.to(device).clone()
-
-        # Auto-range: run a short MH warmup on first chain to discover energy range
-        if self._auto_range:
-            warmup_energies = []
-            x_warmup = x[0].clone()
-            fx_warmup, _ = self._compute_energy(x_warmup)
-            warmup_energies.append(fx_warmup.item())
-            for _ in range(2000):
-                x_new = self._proposal.propose(x_warmup)
-                fy, in_reg = self._compute_energy(x_new)
-                log_r = (-fy.item() + fx_warmup.item()) / self._temperature
-                if in_reg and (log_r > 0 or torch.rand(1).item() < math.exp(min(log_r, 0))):
-                    x_warmup = x_new
-                    fx_warmup = fy
-                warmup_energies.append(fx_warmup.item())
-            e_min_auto = min(warmup_energies)
-            e_max_auto = max(warmup_energies)
-            margin = max(0.1 * (e_max_auto - e_min_auto), 0.5)
-            self._partition = UniformPartition(
-                e_min_auto - margin, e_max_auto + margin, self._auto_n_partitions
-            )
-            self._n_partitions = self._partition.n_partitions
+        x = x0.to(device=device, dtype=self._dtype).clone()
 
         fx, in_region = self._compute_energy_batch(x)  # (N,), (N,)
+
+        # Deferred partition: create ExpandablePartition centered on first chain's energy
+        if self._deferred_partition:
+            self._init_partition_from_energy(fx[0].item())
 
         # Warn if any initial state is out of partition range
         for c in range(n_chains):
@@ -678,6 +833,10 @@ class SAMC:
                     theta[k1] += delta
                     counts[k1] += 1
 
+                # Feed back to adaptive proposal
+                if hasattr(self._proposal, "report_accept"):
+                    self._proposal.report_accept(accept)
+
                 total_decisions += 1
 
                 if fx[c].item() < best_energy:
@@ -695,9 +854,9 @@ class SAMC:
 
         acc_rate = accept_count / total_decisions if total_decisions > 0 else 0.0
 
-        self.log_weights = theta.to(device)
+        self.log_weights = theta  # stays on CPU (float64, MPS-safe)
         self.energy_history = energy_history
-        self.bin_counts = counts.to(device)
+        self.bin_counts = counts  # stays on CPU
         self.acceptance_rate = acc_rate
         self.best_x = best_x
         self.best_energy = best_energy
@@ -714,7 +873,7 @@ class SAMC:
             stacked = torch.stack(samples)  # (n_saved, N, dim)
             samples_tensor = stacked.permute(1, 0, 2)  # (N, n_saved, dim)
         else:
-            samples_tensor = torch.empty(n_chains, 0, self._dim, device=device)
+            samples_tensor = torch.empty(n_chains, 0, self._dim, device=device, dtype=self._dtype)
 
         # Per-sample importance log-weights: +theta[bin] → (N, n_saved)
         # SAMC samples from exp(-E/T - theta[k]), weight by exp(+theta[k]).
@@ -725,7 +884,7 @@ class SAMC:
             bin_idx = torch.tensor(sample_bins_per_step, dtype=torch.long)
             in_range = bin_idx >= 0
             sample_log_w = torch.full_like(
-                bin_idx, float("-inf"), dtype=torch.float32, device=device
+                bin_idx, float("-inf"), dtype=self._dtype, device=device
             )
             if in_range.any():
                 valid_bins = bin_idx[in_range]
@@ -735,20 +894,22 @@ class SAMC:
                 visited_flat = in_range_flat[visited_mask]
                 for idx in visited_flat:
                     r, c = idx[0].item(), idx[1].item()
-                    sample_log_w[r, c] = theta[bin_idx[r, c]].float().to(device)
+                    sample_log_w[r, c] = theta[bin_idx[r, c]].to(
+                        device=device, dtype=self._dtype
+                    )
             sample_log_w = sample_log_w.permute(1, 0)  # (N, n_saved)
         else:
-            sample_log_w = torch.empty(n_chains, 0, device=device)
+            sample_log_w = torch.empty(n_chains, 0, device=device, dtype=self._dtype)
 
         # energy_history: list of (N,) → (n_steps, N) on device
         energy_tensor = torch.stack(energy_history).to(device)  # (n_steps, N)
 
         return SAMCResult(
             samples=samples_tensor,
-            log_weights=theta.to(device).clone(),
+            log_weights=theta.clone(),
             sample_log_weights=sample_log_w,
             energy_history=energy_tensor,
-            bin_counts=counts.to(device).clone(),
+            bin_counts=counts.clone(),
             acceptance_rate=acc_rate,
             best_x=best_x.clone(),
             best_energy=best_energy,

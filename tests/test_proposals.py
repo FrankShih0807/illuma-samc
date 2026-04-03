@@ -38,6 +38,53 @@ class TestGaussianProposal:
         mean = proposals.mean(dim=0)
         assert torch.allclose(mean, x, atol=0.1)
 
+    def test_adapt_reduces_step_when_all_rejected(self):
+        """If every proposal is rejected, step size should decrease."""
+        p = GaussianProposal(step_size=1.0, adapt=True, adapt_warmup=200)
+        initial = p.step_size
+        for _ in range(200):
+            p.report_accept(False)
+        assert p.step_size < initial * 0.5
+
+    def test_adapt_increases_step_when_all_accepted(self):
+        """If every proposal is accepted, step size should increase."""
+        p = GaussianProposal(step_size=0.01, adapt=True, adapt_warmup=200)
+        initial = p.step_size
+        for _ in range(200):
+            p.report_accept(True)
+        assert p.step_size > initial * 2
+
+    def test_adapt_freezes_after_warmup(self):
+        """Step size should not change after warmup."""
+        p = GaussianProposal(step_size=0.5, adapt=True, adapt_warmup=100)
+        for _ in range(100):
+            p.report_accept(True)
+        frozen = p.step_size
+        assert p.adapted
+        # More calls should be no-ops
+        for _ in range(100):
+            p.report_accept(False)
+        assert p.step_size == frozen
+
+    def test_adapt_converges_near_target(self):
+        """With 35% acceptance, step size should stay roughly stable."""
+        import random
+
+        random.seed(42)
+        p = GaussianProposal(step_size=0.5, adapt=True, target_rate=0.35, adapt_warmup=2000)
+        for _ in range(2000):
+            p.report_accept(random.random() < 0.35)
+        # Step size shouldn't have drifted wildly from initial
+        assert 0.05 < p.step_size < 5.0
+
+    def test_no_adapt_by_default(self):
+        """report_accept is a no-op when adapt=False."""
+        p = GaussianProposal(step_size=0.5)
+        initial = p.step_size
+        for _ in range(100):
+            p.report_accept(False)
+        assert p.step_size == initial
+
 
 def _quadratic_energy(x: torch.Tensor) -> torch.Tensor:
     return 0.5 * torch.sum(x**2)

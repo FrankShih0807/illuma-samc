@@ -68,7 +68,7 @@ def plot_diagnostics(
             axes[0, 1].plot(e_np, linewidth=0.3, alpha=0.7, color="darkorange")
     elif isinstance(energies, list) and len(energies) > 0 and isinstance(energies[0], torch.Tensor):
         # Multi-chain: list of (N,) tensors → stack and average
-        e_np = torch.stack(energies).mean(dim=1).numpy()
+        e_np = torch.stack(energies).cpu().mean(dim=1).numpy()
         axes[0, 1].plot(e_np, linewidth=0.3, alpha=0.7, color="darkorange")
     else:
         axes[0, 1].plot(energies, linewidth=0.3, alpha=0.7, color="darkorange")
@@ -94,7 +94,7 @@ def plot_diagnostics(
             e_1d = e_1d.mean(dim=1)  # average across chains
     elif isinstance(e_hist, list) and len(e_hist) > 0 and isinstance(e_hist[0], torch.Tensor):
         # Multi-chain: list of (N,) tensors → stack and average
-        e_1d = torch.stack(e_hist).mean(dim=1)
+        e_1d = torch.stack(e_hist).cpu().mean(dim=1)
     else:
         e_1d = torch.tensor(e_hist)
     n = len(e_1d)
@@ -102,8 +102,8 @@ def plot_diagnostics(
         # Compute acceptance from energy changes (energy changed => accepted)
         changed = (e_1d[1:] != e_1d[:-1]).float()
         # Pad with zeros at start
-        padded = torch.cat([torch.zeros(rolling_window - 1), changed])
-        kernel = torch.ones(rolling_window) / rolling_window
+        padded = torch.cat([torch.zeros(rolling_window - 1).to(changed.device), changed])
+        kernel = torch.ones(rolling_window).to(changed.device) / rolling_window
         rolling_rate = torch.nn.functional.conv1d(
             padded.unsqueeze(0).unsqueeze(0),
             kernel.unsqueeze(0).unsqueeze(0),

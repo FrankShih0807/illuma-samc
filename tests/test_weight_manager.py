@@ -477,68 +477,6 @@ class TestPlotDiagnostics:
         assert fig is not None
 
 
-class TestFromWarmup:
-    def test_basic_auto_range(self):
-        """from_warmup should detect a reasonable energy range."""
-
-        def energy_fn(x):
-            return (x**2).sum()
-
-        torch.manual_seed(42)
-        wm = SAMCWeights.from_warmup(energy_fn, dim=2, n_bins=20, warmup_steps=500)
-        assert wm.n_bins == 20
-        # Partition should have a reasonable range (quadratic on dim=2)
-        edges = wm.partition.edges
-        assert edges[0].item() < 5.0  # should include low energies
-        assert edges[-1].item() > 0.0
-
-    def test_with_overflow_bins(self):
-        def energy_fn(x):
-            return (x**2).sum()
-
-        torch.manual_seed(42)
-        wm = SAMCWeights.from_warmup(
-            energy_fn, dim=2, n_bins=20, warmup_steps=200, overflow_bins=True
-        )
-        assert wm.n_bins == 22  # 20 + 2 overflow
-
-    def test_with_tuple_energy_fn(self):
-        """from_warmup should handle energy functions returning (energy, in_region)."""
-
-        def energy_fn(x):
-            return (x**2).sum(), True
-
-        torch.manual_seed(42)
-        wm = SAMCWeights.from_warmup(energy_fn, dim=2, n_bins=10, warmup_steps=200)
-        assert wm.n_bins == 10
-
-    def test_custom_gain(self):
-        def energy_fn(x):
-            return (x**2).sum()
-
-        torch.manual_seed(42)
-        wm = SAMCWeights.from_warmup(
-            energy_fn, dim=2, n_bins=10, warmup_steps=100, gain="ramp", gain_kwargs={"rho": 1.0}
-        )
-        assert wm.n_bins == 10
-
-    def test_margin_expands_range(self):
-        """Larger margin should produce wider energy range."""
-
-        def energy_fn(x):
-            return (x**2).sum()
-
-        torch.manual_seed(42)
-        wm_narrow = SAMCWeights.from_warmup(
-            energy_fn, dim=2, n_bins=10, warmup_steps=500, margin=0.0
-        )
-        torch.manual_seed(42)
-        wm_wide = SAMCWeights.from_warmup(energy_fn, dim=2, n_bins=10, warmup_steps=500, margin=0.5)
-        narrow_range = wm_narrow.partition.edges[-1] - wm_narrow.partition.edges[0]
-        wide_range = wm_wide.partition.edges[-1] - wm_wide.partition.edges[0]
-        assert wide_range > narrow_range
-
-
 class TestResizeForPartition:
     def test_expand(self):
         wm = make_wm()
@@ -562,3 +500,43 @@ class TestResizeForPartition:
         old_theta = wm.theta.clone()
         wm._resize_for_partition()
         assert torch.equal(wm.theta, old_theta)
+
+
+class TestDtype:
+    """Tests for dtype parameter on SAMCWeights."""
+
+    def test_dtype_float64_stored(self):
+        """SAMCWeights(dtype='float64') stores float64 dtype."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype="float64",
+        )
+        assert wm._dtype == torch.float64
+
+    def test_dtype_torch_float32(self):
+        """SAMCWeights(dtype=torch.float32) stores float32 dtype."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype=torch.float32,
+        )
+        assert wm._dtype == torch.float32
+
+    def test_theta_always_float64(self):
+        """Internal theta stays float64 regardless of user dtype."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype="float32",
+        )
+        assert wm.theta.dtype == torch.float64
+
+    def test_theta_float64_when_dtype_float64(self):
+        """theta is still float64 even if user requests float64."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype="float64",
+        )
+        assert wm.theta.dtype == torch.float64
