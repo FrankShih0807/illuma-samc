@@ -20,6 +20,14 @@ Production-quality Stochastic Approximation Monte Carlo (SAMC) for PyTorch.
 
 .. toctree::
    :maxdepth: 2
+   :caption: Tutorials
+
+   tutorials/drop_in
+   tutorials/multi_chain
+   tutorials/bayesian
+
+.. toctree::
+   :maxdepth: 2
    :caption: Reference
 
    api

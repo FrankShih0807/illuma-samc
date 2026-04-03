@@ -131,7 +131,7 @@ Step 4 — Gain sequence decay
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The gain :math:`\gamma_t` must decrease over time so that the weights converge
-rather than oscillate. The standard choice (Liang et al. 2007) is:
+rather than oscillate. The standard choice [Liang2007]_ is:
 
 .. math::
 
@@ -145,7 +145,7 @@ exploration before slowing down for stable convergence.
 
 The default schedule in ``illuma-samc`` is ``"ramp"``, which holds a constant
 gain during warmup and then decays as a power law, matching the behavior of
-Liang's reference implementation.
+Liang's reference implementation [Liang2009]_.
 
 
 Key Components
