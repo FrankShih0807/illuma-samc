@@ -207,7 +207,7 @@ Based on ablation studies across 6 problems (2D to 100D), 12 parameter groups, 6
 2. **Gain schedule** -- use `ramp` or `1/t`. `ramp` is the default and works well.
 3. **Gain t0** -- use t0 >= 1000. Too small (100) gives poor flatness.
 4. **Number of bins** -- 20-80 works well; scale up (~40-50) for higher-dimensional problems.
-5. **Number of chains** -- 4-8 chains with shared weights gives best flatness.
+5. **Number of chains** -- 4-8 chains with independent weights (default) gives best results.
 
 **Rule of thumb for energy range (high-dim):**
 Run a short MH probe to estimate energy range. Set `e_min` slightly below the minimum, `e_max` at the 90th-95th percentile of observed energies (not the max). A range that's too wide is almost as bad as too narrow.
