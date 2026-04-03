@@ -85,7 +85,7 @@ class SAMCWeights:
         Number of bins above and below the starting energy.
         Default 100 (201 total bins: 100 below + 1 center + 100 above).
     max_bins : int
-        Maximum bins after expansion. Default 500.
+        Maximum bins after expansion. Default 1000.
     partition : Partition, optional
         Explicit energy-space partition. Overrides auto-initialization.
     gain : GainSequence or str, optional

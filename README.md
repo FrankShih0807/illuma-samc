@@ -180,17 +180,6 @@ sampler = SAMC(
 result = sampler.run(n_steps=200_000)
 ```
 
-Validated against hand-tuned ablation winners (500K-200K iters, 5 seeds each):
-
-| Problem | Dim | Zero-Config vs Hand-Tuned | Verdict |
-|---------|-----|--------------------------|---------|
-| 2D Multimodal | 2 | Identical (-8.1246) | Use defaults |
-| Rosenbrock | 2 | Identical (E≈0) | Use defaults |
-| Rastrigin | 20 | Identical (E=0) | Use defaults |
-| Gaussian Mix | 10 | +49% gap | Set energy range |
-| Gaussian Mix | 50 | +114% gap | Set energy range |
-| Gaussian Mix | 100 | +305% gap | Set energy range + n_partitions |
-
 For high-dimensional problems (dim >= 20 with widely-separated modes), specify the energy range:
 
 ```python
@@ -228,18 +217,18 @@ Run a short MH probe to estimate energy range. Set `e_min` slightly below the mi
 - For **sampling** (covering the energy landscape): use SAMC. It provides flat-histogram exploration guarantees.
 - For **hard multimodal problems** (20D+, many local minima): SAMC with 8-16 chains outperforms both MH and PT.
 
-**Cross-algorithm comparison** (best energy, mean +/- std, 200K iterations x 4 chains, 5 seeds):
+**Cross-algorithm comparison** (best energy found, 200K iterations x 4 chains, 5 seeds):
 
-All algorithms use identical compute budgets (800K energy evals each), the same random starting points, and adaptive Gaussian proposals (`GaussianProposal(step_size=1.0, adapt=True)`). SAMC is zero-config — no hand-tuned energy range or partition. Each chain runs with independent weights.
+All algorithms use identical compute budgets (800K energy evals each), the same random starting points, and adaptive Gaussian proposals. SAMC is zero-config — no hand-tuned energy range or partition. Each chain runs with independent weights.
 
 | Problem | Dim | MH | PT | SAMC (default) |
 |---------|-----|----|----|----------------|
-| 10D Gaussian Mixture | 10 | **0.24 +/- 0.06** | 0.27 +/- 0.08 | 0.31 +/- 0.06 |
-| 50D Gaussian Mixture | 50 | 8.99 +/- 0.68 | 9.61 +/- 0.94 | **3.43 +/- 0.60** |
-| 100D Gaussian Mixture | 100 | 24.64 +/- 0.86 | 27.20 +/- 0.81 | **13.40 +/- 1.61** |
-| Rastrigin 20D | 20 | 22.86 +/- 3.35 | **19.34 +/- 1.92** | 21.29 +/- 3.20 |
+| 10D Gaussian Mixture | 10 | **0.24** | 0.27 | 0.31 |
+| 50D Gaussian Mixture | 50 | 8.99 | 9.61 | **3.43** |
+| 100D Gaussian Mixture | 100 | 24.64 | 27.20 | **13.40** |
+| Rastrigin 20D | 20 | 22.86 | **19.34** | 21.29 |
 
-Bold = best result per row. Lower is better.
+Lower is better. Bold = best per row. Mean over 5 seeds.
 
 At low dimension (10D), all three algorithms perform similarly — MH converges quickly and SAMC's flat-histogram overhead is a slight disadvantage. But SAMC's exploration advantage grows with dimension: it achieves **2.6x better energy than MH at 50D** and **1.8x better at 100D**, without any tuning. PT stays close to MH throughout and never escapes the high-dimensional curse. On Rastrigin (highly multimodal), PT has a slight edge; set `e_min/e_max` explicitly for better SAMC results on this problem (see [Tuning Guide](#tuning-guide)).
 
