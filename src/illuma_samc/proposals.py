@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Callable
 
@@ -30,10 +31,79 @@ class GaussianProposal(Proposal):
     ----------
     step_size : float
         Standard deviation of the Gaussian perturbation.
+    adapt : bool
+        Enable dual-averaging adaptation of *step_size* during a warmup
+        phase. After ``adapt_warmup`` accepted/rejected decisions,
+        the step size freezes at the tuned value.
+    target_rate : float
+        Target Metropolis acceptance rate (used when ``adapt=True``).
+        Default 0.35, which is near-optimal for random-walk proposals
+        in moderate dimensions.
+    adapt_warmup : int
+        Number of accept/reject decisions before the step size freezes.
+        Default 1000.
     """
 
-    def __init__(self, step_size: float = 0.25) -> None:
+    def __init__(
+        self,
+        step_size: float = 0.25,
+        *,
+        adapt: bool = False,
+        target_rate: float = 0.35,
+        adapt_warmup: int = 1000,
+    ) -> None:
         self._step_size = step_size
+        self._initial_step_size = step_size
+
+        # Dual averaging state
+        self._adapt = adapt
+        self._target_rate = target_rate
+        self._adapt_warmup = adapt_warmup
+        self._adapt_count = 0
+        # Dual averaging parameters (Nesterov 2009 / NUTS)
+        self._mu = math.log(10.0 * step_size)  # shrinkage target
+        self._log_step = math.log(step_size)
+        self._log_step_bar = 0.0  # running weighted average
+        self._h_bar = 0.0  # running acceptance statistic
+        self._gamma = 0.05
+        self._kappa = 0.75
+        self._t0 = 10.0
+
+    @property
+    def step_size(self) -> float:
+        """Current step size (may change during adaptation)."""
+        return self._step_size
+
+    @property
+    def adapted(self) -> bool:
+        """Whether adaptation is complete."""
+        return not self._adapt or self._adapt_count >= self._adapt_warmup
+
+    def report_accept(self, accepted: bool) -> None:
+        """Feed back an accept/reject decision for step-size adaptation.
+
+        No-op if ``adapt=False`` or warmup is finished.
+        """
+        if not self._adapt or self._adapt_count >= self._adapt_warmup:
+            return
+
+        self._adapt_count += 1
+        m = self._adapt_count
+
+        # Dual averaging update (Algorithm 5 from NUTS paper)
+        alpha = 1.0 if accepted else 0.0
+        w = 1.0 / (m + self._t0)
+        self._h_bar = (1.0 - w) * self._h_bar + w * (self._target_rate - alpha)
+
+        self._log_step = self._mu - (math.sqrt(m) / self._gamma) * self._h_bar
+        self._step_size = math.exp(self._log_step)
+
+        m_kappa = m ** (-self._kappa)
+        self._log_step_bar = m_kappa * self._log_step + (1.0 - m_kappa) * self._log_step_bar
+
+        # Freeze at warmup end
+        if self._adapt_count >= self._adapt_warmup:
+            self._step_size = math.exp(self._log_step_bar)
 
     def propose(self, x: torch.Tensor) -> torch.Tensor:
         return x + self._step_size * torch.randn_like(x)

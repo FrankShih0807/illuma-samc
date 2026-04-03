@@ -139,20 +139,16 @@ class TestUXWarnings:
 
     def test_all_partitions_have_edges(self):
         from illuma_samc.partitions import (
-            AdaptivePartition,
+            ExpandablePartition,
             Partition,
-            QuantilePartition,
             UniformPartition,
         )
 
         u = UniformPartition(0.0, 10.0, 5)
         assert isinstance(u.edges, torch.Tensor)
 
-        a = AdaptivePartition(0.0, 10.0, 5)
-        assert isinstance(a.edges, torch.Tensor)
-
-        q = QuantilePartition(torch.linspace(0, 10, 100), 5)
-        assert isinstance(q.edges, torch.Tensor)
+        e = ExpandablePartition(0.0, 10.0, 5)
+        assert isinstance(e.edges, torch.Tensor)
 
         # Check that Partition base class has edges as abstract property
         assert hasattr(Partition, "edges")
@@ -593,7 +589,7 @@ class TestMultiChain:
         )
         single_result = single.run(n_steps=5000, progress=False)
 
-        # Multi-chain (same total work: fewer steps but more chains)
+        # Multi-chain shared weights (same total work: fewer steps but more chains)
         torch.manual_seed(99)
         multi = SAMC(
             energy_fn=_quadratic_energy_batch,
@@ -604,6 +600,7 @@ class TestMultiChain:
             proposal_std=0.3,
             gain="1/t",
             gain_kwargs={"t0": 200},
+            shared_weights=True,
         )
         x0 = torch.randn(4, 2)
         multi_result = multi.run(n_steps=5000, x0=x0, progress=False)
@@ -611,6 +608,48 @@ class TestMultiChain:
         # Both should find energy near 0 (quadratic minimum)
         assert single_result.best_energy < 1.0
         assert multi_result.best_energy < 1.0
+
+    def test_independent_chains_basic(self):
+        """n_chains > 1 with default shared_weights=False runs independent chains."""
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_chains=2,
+            n_partitions=10,
+            e_min=-5.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=500, save_every=10, progress=False)
+
+        # Independent chains: same output shapes as shared-weights mode
+        assert result.samples.shape == (2, 50, 2)
+        assert result.sample_log_weights.shape == (2, 50)
+        assert result.energy_history.shape == (500, 2)
+        assert result.log_weights.shape == (10,)
+        assert result.bin_counts.shape == (10,)
+        assert 0.0 <= result.acceptance_rate <= 1.0
+        assert result.best_x.shape == (2,)
+        assert result.best_energy < float("inf")
+
+    def test_independent_chains_find_minimum(self):
+        """Independent chains should find the quadratic minimum."""
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=_quadratic_energy_batch,
+            dim=2,
+            n_chains=3,
+            n_partitions=10,
+            e_min=-5.0,
+            e_max=5.0,
+            proposal_std=0.5,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=5000, progress=False)
+        assert result.best_energy < 0.5
 
 
 class TestGPU:
@@ -796,3 +835,57 @@ class TestAdditionalCoverage:
         import matplotlib.pyplot as plt
 
         plt.close(fig)
+
+
+class TestAdaptiveProposal:
+    """Integration tests for adaptive proposal tuning in SAMC."""
+
+    def test_adapt_recovers_from_bad_step_size(self):
+        """SAMC with adaptive proposal should recover from a bad initial step size.
+
+        Start with proposal_std=5.0 (way too large for this problem).
+        Adaptive should tune it down and achieve reasonable acceptance rate.
+        """
+
+        def quadratic(x: torch.Tensor) -> torch.Tensor:
+            return 0.5 * torch.sum(x**2)
+
+        torch.manual_seed(42)
+        sampler = SAMC(
+            energy_fn=quadratic,
+            dim=2,
+            n_partitions=20,
+            e_min=0.0,
+            e_max=10.0,
+            proposal_std=5.0,
+            adapt_proposal=True,
+            adapt_warmup=500,
+            gain="1/t",
+            gain_kwargs={"t0": 100},
+        )
+        result = sampler.run(n_steps=5000, progress=False)
+        # With adaptation, acceptance rate should be reasonable (> 10%)
+        assert result.acceptance_rate > 0.10
+        # Step size should have decreased from 5.0
+        assert sampler._proposal.step_size < 5.0
+
+    def test_adapt_flag_passed_through(self):
+        """adapt_proposal=True creates an adaptive GaussianProposal."""
+        sampler = SAMC(
+            energy_fn=lambda x: 0.5 * x.sum() ** 2,
+            dim=2,
+            adapt_proposal=True,
+            adapt_warmup=200,
+            target_accept_rate=0.4,
+        )
+        assert sampler._proposal._adapt is True
+        assert sampler._proposal._adapt_warmup == 200
+        assert sampler._proposal._target_rate == 0.4
+
+    def test_no_adapt_by_default(self):
+        """Default SAMC should not adapt."""
+        sampler = SAMC(
+            energy_fn=lambda x: 0.5 * x.sum() ** 2,
+            dim=2,
+        )
+        assert sampler._proposal._adapt is False

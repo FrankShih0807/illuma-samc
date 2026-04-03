@@ -354,11 +354,11 @@ For UX improvements and input validation, the same pipeline applies:
 - [x] Run ablations on all 4 problems x 5 scenarios x 4 methods x 3 seeds (240 runs)
 - [x] Write analysis to `ablation/reports/robust_bins_insights.md`
 
-## Phase 5.5: Robust Defaults Validation
+## Phase 5.5: Robust Defaults Validation & README Comparison
 
-> Do users need to tune anything, or do adaptive proposal + auto bins just work?
-> The ablation studies (Steps 24-28) were done BEFORE adaptive proposal and robust bins.
-> This phase validates that the robust version matches the hand-tuned ablation winners.
+> Validate robust defaults, then produce a fair 4-way comparison for README.
+> SAMC class deferred partition now aligned with SAMCWeights defaults:
+> bin_width=0.5, n_bins_per_side=100, max_bins=1000.
 
 ### Step 43: Create Benchmark Script (Worker)
 
@@ -396,58 +396,219 @@ Best SAMC config per problem from Steps 24-28:
 **Output:** Save all results to `ablation/outputs/robust_defaults/` as JSON per run.
 
 Worker checklist:
-- [ ] Create `ablation/robust_defaults.py` with both configs
-- [ ] Verify it runs on 2d with 1 seed (smoke test) before full run
-- [ ] Run all 6 problems x 2 configs x 5 seeds = 60 runs
-- [ ] Print summary table to stdout
+- [x] Create `ablation/robust_defaults.py` with both configs
+- [x] Verify it runs on 2d with 1 seed (smoke test) before full run
+- [x] Run all 6 problems x 2 configs x 5 seeds = 60 runs
+- [x] Print summary table to stdout
 
 ### Step 44: Analyze Results and Write Report (Worker)
 
 Create `ablation/analyze_robust_defaults.py` that:
-- [ ] Loads all JSON results from `ablation/outputs/robust_defaults/`
-- [ ] Computes mean +/- std per (problem, config) group
-- [ ] Generates comparison table: robust defaults vs hand-tuned per problem
-- [ ] Computes "gap" = (robust_energy - tuned_energy) / |tuned_energy| as % degradation
-- [ ] Writes `ablation/reports/robust_defaults.md` with:
+- [x] Loads all JSON results from `ablation/outputs/robust_defaults/`
+- [x] Computes mean +/- std per (problem, config) group
+- [x] Generates comparison table: robust defaults vs hand-tuned per problem
+- [x] Computes "gap" = (robust_energy - tuned_energy) / |tuned_energy| as % degradation
+- [x] Writes `ablation/reports/robust_defaults.md` with:
   - Summary table (problem x config x metrics)
   - Per-problem analysis: where does auto-tuning match? Where does it fall short?
   - Final verdict: what (if anything) do users still need to tune?
   - Recommended "minimal tuning" guide: which 1-2 params matter if defaults aren't enough
 
 Worker checklist:
-- [ ] Script runs cleanly on the Step 43 outputs
-- [ ] Report includes all 6 problems
-- [ ] Report has a clear verdict section
+- [x] Script runs cleanly on the Step 43 outputs
+- [x] Report includes all 6 problems
+- [x] Report has a clear verdict section
 
 ### Step 45: Update README Tuning Guide (Worker)
 
 Based on the Step 44 report:
-- [ ] If robust defaults match within 10%: simplify tuning guide to "just use defaults"
-- [ ] If some problems need tuning: list only the params that matter
-- [ ] Update the sensitivity ranking to reflect that #1 and #2 are now auto-handled
-- [ ] Add a "Zero-Config Quick Start" example using robust defaults
-- [ ] Remove or demote advice that's no longer relevant
+- [x] If robust defaults match within 10%: simplify tuning guide to "just use defaults"
+- [x] If some problems need tuning: list only the params that matter
+- [x] Update the sensitivity ranking to reflect that #1 and #2 are now auto-handled
+- [x] Add a "Zero-Config Quick Start" example using robust defaults
+- [x] Remove or demote advice that's no longer relevant
 
 Worker checklist:
-- [ ] README tuning section is updated
-- [ ] No stale advice remains from pre-robust ablations
+- [x] README tuning section is updated
+- [x] No stale advice remains from pre-robust ablations
 
 ### Step 46: Inspector Review
 
 Inspector verifies:
-- [ ] `ablation/robust_defaults.py` uses correct hand-tuned configs (cross-check against ablation reports)
-- [ ] Robust defaults config truly uses NO manual tuning (no hardcoded e_min/e_max/proposal_std)
-- [ ] Results are reproducible (rerun 1 problem, 1 seed, verify match)
-- [ ] Report conclusions are supported by the data (no cherry-picking)
-- [ ] README tuning guide is consistent with report findings
-- [ ] All tests still pass (`pytest -v`)
-- [ ] Ruff clean (`ruff check .`)
+- [x] `ablation/robust_defaults.py` uses correct hand-tuned configs (cross-check against ablation reports)
+- [x] Robust defaults config truly uses NO manual tuning (no hardcoded e_min/e_max/proposal_std)
+- [x] Results are reproducible (rerun 1 problem, 1 seed, verify match)
+- [x] Report conclusions are supported by the data (no cherry-picking)
+- [x] README tuning guide is consistent with report findings
+- [x] All tests still pass (`pytest -v`)
+- [x] Ruff clean (`ruff check .`)
+
+### Step 47: Re-run 4-Way Benchmark with Aligned Defaults (Worker)
+
+**Context:** SAMC class `_init_partition_from_energy` was misaligned with SAMCWeights.
+Now both use: `bin_width=0.5, n_bins_per_side=100, max_bins=1000`.
+Quick test shows massive improvement: 10D went from 33.1 → 0.66, 50D from 37.4 → 7.7.
+
+**Task:** Re-run `benchmarks/four_way.py` with the aligned code and update README.
+
+Worker checklist:
+- [x] Delete old cached results: `rm -rf benchmarks/outputs/four_way`
+- [x] Run full benchmark: `python benchmarks/four_way.py` (4 problems x 4 algos x 3 seeds = 48 runs, 200K iters)
+- [x] Collect results into summary table
+- [x] Update README comparison table at line ~224 with new numbers
+- [x] Bold the best result per row
+- [x] Update narrative text below the table
+- [x] Run `ruff format . && ruff check .`
+- [x] Run `pytest -x -q` to verify no regressions
+- [x] Commit: "Update 4-way comparison with aligned partition defaults"
+
+### Step 48: Fair 3-Way Benchmark (Worker)
+
+**Context:** Inspector found major fairness issues in the 4-way benchmark:
+- Unequal energy evals (MH: 200K, SAMC: 800K, PT: 1.6M)
+- Different starting points (SAMC: origin, MH/PT: random)
+- SAMC had adaptive proposal, MH/PT had fixed
+- SAMC(tuned) was not the real ablation winner, just a modified version
+
+**Decision:** Drop SAMC(tuned), keep only 3 algos: **MH vs PT vs SAMC (default/zero-config)**.
+All algos get identical compute, starting points, and adaptive proposals.
+
+**Task:** Rewrite `benchmarks/four_way.py` → `benchmarks/three_way.py` with these rules:
+
+1. **3 algorithms:** MH, PT, SAMC (default zero-config only)
+2. **4 chains/replicas each** — all algos get exactly `4 * n_iters` energy evals
+   - MH: `n_chains=4` (already supported in `run_mh`)
+   - PT: `n_replicas=4`, t_min=1.0, t_max=10.0, swap_interval=10
+   - SAMC: `n_chains=4`, `adapt_proposal=True`, `adapt_warmup=2000`, no e_min/e_max
+3. **Random starting point** — generate `x0 = torch.randn(dim)` ONCE per (problem, seed), pass same x0 to all algos
+   - MH: pass `x0=x0` (single chain gets this; for multi-chain, each chain gets independent random but seeded)
+   - PT: need to set `init_scale=1.0` (already default, starts from `torch.randn`)
+   - SAMC: pass `x0=x0.unsqueeze(0).expand(4, -1).clone()` to give all 4 chains same start? Or let each chain start random? — Use same seed so all chains start consistently.
+   - **Actually simplest:** just use `torch.manual_seed(seed)` before each algo call. Then MH multi-chain and PT both generate their own random starts from the same seed. SAMC with x0=None generates zeros — so explicitly pass `x0 = torch.randn(4, dim)` to SAMC after seeding.
+4. **Adaptive proposal for MH/PT** — MH and PT baselines don't support adaptive proposals natively. Two options:
+   - Option A: Write MH/PT loops using `GaussianProposal(adapt=True)` directly in the benchmark script
+   - Option B: Keep fixed proposal but use a reasonable formula, and note it in the table
+   - **Use Option A** — write simple MH and PT loops in the benchmark that use `GaussianProposal(step_size=1.0, adapt=True)` so all 3 algos auto-tune their step size
+5. **Problems:** 10d, 50d, 100d, rastrigin (same 4 problems)
+6. **Seeds:** 42, 123, 999 (3 seeds)
+7. **Iterations:** 200K per chain/replica
+8. **Output:** `benchmarks/outputs/three_way/`, JSON per run
+9. **Summary table:** 3 columns (SAMC, MH, PT), markdown format for README
+
+Worker checklist:
+- [x] Create `benchmarks/three_way.py` with the above rules
+- [x] For MH with adaptive: write a simple loop using `GaussianProposal(adapt=True)` + 4 independent chains, pick best
+- [x] For PT with adaptive: write a loop using `GaussianProposal(adapt=True)` per replica + swap logic, 4 replicas
+- [x] Smoke test with `--smoke` flag (1 problem, 1 seed, 10K iters)
+- [x] Run full benchmark: `conda run -n illuma-samc python benchmarks/three_way.py`
+- [x] Update README comparison table with new 3-column results
+- [x] Update narrative text (remove SAMC tuned references, update multipliers)
+- [x] `ruff format . && ruff check .`
+- [x] `pytest -x -q`
+- [x] Report full results table
+
+**Fairness checklist (inspector will verify):**
+- [x] All 3 algos: exactly 4 chains/replicas x 200K iters = 800K energy evals
+- [x] All 3 algos: same random seed → same RNG state before each run
+- [x] All 3 algos: `GaussianProposal(adapt=True)` for step-size tuning
+- [x] SAMC uses zero-config defaults only (no e_min/e_max/n_partitions)
+- [x] No algo starts at origin — all start from random or seeded random
+
+## Phase 5.75: API Simplification
+
+> Simplify SAMC and SAMCWeights based on benchmark findings.
+> Remove dead code, align defaults, make independent weights the default.
+
+### Step 49: Remove Unused Partition Types (Worker)
+
+**What to remove:**
+- `AdaptivePartition` — not used anywhere in sampler/weight_manager, only has tests
+- `QuantilePartition` — not used anywhere, only has tests
+- `GrowingPartition` — replaced by `ExpandablePartition`, only used in deprecated `SAMCWeights.auto()`
+
+**What to keep:**
+- `Partition` (base class)
+- `UniformPartition` (explicit range)
+- `ExpandablePartition` (auto-expand, the default)
+
+Worker checklist:
+- [x] Remove `AdaptivePartition`, `QuantilePartition`, `GrowingPartition` from `partitions.py`
+- [x] Remove `SAMCWeights.auto()` classmethod (uses GrowingPartition, deprecated)
+- [x] Remove `SAMCWeights.from_warmup()` classmethod (uses warmup MH, replaced by expand-on-demand)
+- [x] Remove `GrowingPartition` from `__init__.py` exports
+- [x] Remove tests for removed classes from `tests/test_partitions.py`
+- [x] Remove any `from_warmup` tests from `tests/test_weight_manager.py`
+- [x] Update `train.py` to remove references to removed partition types / factory methods
+- [x] Update `ablation/` scripts if they reference removed classes
+- [x] `ruff format . && ruff check .`
+- [x] `pytest -x -q` — all remaining tests pass
+- [x] Commit: "Remove unused partition types: Adaptive, Quantile, Growing"
+
+### Step 50: Independent Weights as Default for SAMC (Worker)
+
+**Current:** `SAMC(n_chains=4)` always shares weights across chains.
+
+**Target:** `SAMC(n_chains=4)` defaults to independent weights. `shared_weights=True` for shared.
+
+Independent = each chain has its own theta, counts, partition, and proposal.
+Shared = all chains update one theta (current behavior).
+
+Worker checklist:
+- [x] Add `shared_weights: bool = False` parameter to `SAMC.__init__`
+- [x] `n_chains > 1, shared_weights=False` (default): call `_run_single_chain` N times, each with its own state. Aggregate results: best_energy=min, acceptance_rate=avg, samples per-chain.
+- [x] `n_chains > 1, shared_weights=True`: existing `_run_multi_chain` behavior
+- [x] `n_chains=1`: unchanged (single chain, `shared_weights` ignored)
+- [x] Update docstrings
+- [x] Fix existing multi-chain tests: add `shared_weights=True` where they test shared behavior
+- [x] Add test for independent mode
+- [x] `ruff format . && ruff check . && pytest -x -q`
+- [x] Commit: "Default to independent weights for multi-chain SAMC"
+
+### Step 51: Align SAMC and SAMCWeights Bin Defaults (Worker)
+
+**Current state:**
+- SAMCWeights default: `bin_width=0.25, n_bins_per_side=100, max_bins=1000` (201 bins)
+- SAMC class `_init_partition_from_energy`: also `bin_width=0.25, 201 bins, max_bins=1000` (aligned in this session)
+
+**Benchmark finding:** `bin_width=0.5` outperforms 0.25 at 50D and 100D (3.92 vs 4.28 and 13.15 vs 19.12). 0.25 only better for Rastrigin.
+
+**Decision:** Change default `bin_width` to 0.5 for both SAMC and SAMCWeights. Users who need finer resolution can set `bin_width=0.25`.
+
+Worker checklist:
+- [x] Change `SAMCWeights.__init__` default: `bin_width=0.5` (was 0.25)
+- [x] Change `SAMC._init_partition_from_energy`: `bin_width=0.5` (was 0.25)
+- [x] Keep `n_bins_per_side=100, max_bins=1000` (201 bins, same total coverage)
+- [x] Update docstrings to reflect new default
+- [x] Update tests if any hardcode bin_width=0.25 expectations
+- [x] `ruff format . && ruff check .`
+- [x] `pytest -x -q`
+- [x] Commit: "Change default bin_width to 0.5 for better high-dim performance"
+
+### Step 52: Update README and Docs (Worker)
+
+After Steps 49-51:
+- [x] Update README code examples (remove any GrowingPartition/auto/from_warmup references)
+- [x] Update README comparison table with final benchmark numbers
+- [x] Update tuning guide to reflect simplified API
+- [x] Update `docs/api.rst` if it references removed classes
+- [x] Verify all README code snippets still work
+- [ ] Commit: "Update README for simplified API"
+
+### Step 53: Re-run Final Benchmark (Worker)
+
+After Steps 49-51, re-run `benchmarks/three_way.py` with the new defaults to confirm:
+- [x] Delete cached results: `rm -rf benchmarks/outputs/three_way`
+- [x] Run full benchmark with 5 seeds (42, 123, 456, 789, 999) for tighter error bars
+- [x] SAMC should now default to independent weights + bin_width=0.5
+- [x] Update README table with final numbers
+- [x] This is the definitive table for the README
+- [ ] Commit: "Final benchmark with simplified SAMC defaults"
 
 ## Phase 6: PyPI Release
 
 > Ship only after everything else is done and API is stable.
 
-### Step 43: PyPI Release
+### Step 54: PyPI Release
 - [ ] Add `python -m build` + twine upload to CI (or GitHub trusted publishing)
 - [ ] Verify `pip install illuma-samc` works from PyPI
 - [ ] Add installation badge to README

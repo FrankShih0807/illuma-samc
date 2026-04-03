@@ -31,6 +31,28 @@ add two lines to get SAMC:
         wm.step(t, fx)                                        # <-- update weights
 
 That's it. Your MH sampler now explores all energy levels uniformly.
+
+**With adaptive step size** — don't know the right proposal_std? Let it tune itself:
+
+.. code-block:: python
+
+    from illuma_samc.proposals import GaussianProposal
+
+    proposal = GaussianProposal(step_size=1.0, adapt=True)  # <-- any starting guess
+    wm = SAMCWeights()
+
+    for t in range(1, n_steps + 1):
+        x_new = proposal.propose(x)
+        fy = energy_fn(x_new)
+
+        log_r = (-fy + fx) / T + wm.correction(fx, fy)
+        accepted = log_r > 0 or torch.rand(1).item() < math.exp(log_r)
+        if accepted:
+            x, fx = x_new, fy
+        proposal.report_accept(accepted)                     # <-- tune step size
+        wm.step(t, fx)
+
+    print(f"Tuned step size: {proposal.step_size:.4f}")      # see what it found
 """
 
 from __future__ import annotations
@@ -58,7 +80,7 @@ class SAMCWeights:
     Parameters
     ----------
     bin_width : float
-        Width of each energy bin. Default 0.25.
+        Width of each energy bin. Default 0.5.
     n_bins_per_side : int
         Number of bins above and below the starting energy.
         Default 100 (201 total bins: 100 below + 1 center + 100 above).
@@ -77,7 +99,7 @@ class SAMCWeights:
     def __init__(
         self,
         *,
-        bin_width: float = 0.25,
+        bin_width: float = 0.5,
         n_bins_per_side: int = 100,
         max_bins: int = 1000,
         partition: Partition | None = None,
@@ -110,14 +132,15 @@ class SAMCWeights:
             }
             self.gain = GainSequence(gain or "ramp", **(gain_kwargs or default_gain_kwargs))
 
+        # Theta/counts always on CPU (small vectors; MPS lacks float64)
         if not self._deferred_init:
             n = self.partition.n_partitions
-            self.theta = torch.zeros(n, device=self._device, dtype=torch.float64)
-            self.counts = torch.zeros(n, device=self._device, dtype=torch.float64)
+            self.theta = torch.zeros(n, dtype=torch.float64)
+            self.counts = torch.zeros(n, dtype=torch.float64)
             self._refden = 1.0 / n
         else:
-            self.theta = torch.empty(0, device=self._device, dtype=torch.float64)
-            self.counts = torch.empty(0, device=self._device, dtype=torch.float64)
+            self.theta = torch.empty(0, dtype=torch.float64)
+            self.counts = torch.empty(0, dtype=torch.float64)
             self._refden = 0.0
         self._t = 0
 
@@ -155,167 +178,9 @@ class SAMCWeights:
         self._deferred_init = False
 
         n = self.partition.n_partitions
-        self.theta = torch.zeros(n, device=self._device, dtype=torch.float64)
-        self.counts = torch.zeros(n, device=self._device, dtype=torch.float64)
+        self.theta = torch.zeros(n, dtype=torch.float64)
+        self.counts = torch.zeros(n, dtype=torch.float64)
         self._refden = 1.0 / n
-
-    # ------------------------------------------------------------------
-    # Factory methods
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def auto(
-        cls,
-        bin_width: float = 0.2,
-        max_bins: int = 200,
-        growth: str = "eager",
-        expand_threshold: int = 10,
-        gain: str | None = None,
-        gain_kwargs: dict | None = None,
-        *,
-        device: torch.device | str = "cpu",
-        record_every: int = 100,
-    ) -> "SAMCWeights":
-        """Create SAMCWeights with auto-growing partition. No e_min/e_max needed.
-
-        .. deprecated::
-            Use ``SAMCWeights(bin_width=...)`` directly instead.
-        """
-        from illuma_samc.partitions import GrowingPartition
-
-        partition = GrowingPartition(
-            bin_width=bin_width,
-            max_bins=max_bins,
-            growth=growth,
-            expand_threshold=expand_threshold,
-        )
-        default_gain_kwargs = {
-            "rho": 1.0,
-            "tau": 1.0,
-            "warmup": 1,
-            "step_scale": 1000,
-        }
-        gain_obj = GainSequence(gain or "ramp", **(gain_kwargs or default_gain_kwargs))
-        return cls(
-            partition=partition,
-            gain=gain_obj,
-            device=device,
-            record_every=record_every,
-        )
-
-    @classmethod
-    def from_warmup(
-        cls,
-        energy_fn,
-        dim: int,
-        n_bins: int = 42,
-        warmup_steps: int = 5000,
-        proposal_std: float = 0.25,
-        margin: float = 0.1,
-        gain: str | None = None,
-        gain_kwargs: dict | None = None,
-        *,
-        overflow_bins: bool = False,
-        device: torch.device | str = "cpu",
-        record_every: int = 100,
-    ) -> "SAMCWeights":
-        """Create SAMCWeights with auto-detected energy range from warmup MH.
-
-        Runs ``warmup_steps`` of vanilla Metropolis-Hastings (no weight
-        correction) to estimate the energy range, then constructs a
-        :class:`UniformPartition` with ``margin`` padding on each side.
-
-        Parameters
-        ----------
-        energy_fn : callable
-            ``Tensor -> Tensor`` or ``Tensor -> (Tensor, bool)`` energy function.
-        dim : int
-            Dimensionality of the sample space.
-        n_bins : int
-            Number of core energy bins. Default 42.
-        warmup_steps : int
-            Number of warmup MH steps. Default 5000.
-        proposal_std : float
-            Proposal standard deviation for warmup. Default 0.25.
-        margin : float
-            Fractional margin to pad the observed range. Default 0.1
-            (10% on each side).
-        gain : str or None
-            Gain schedule name. Default ``None`` uses ``"1/t"`` with ``t0=1000``.
-        gain_kwargs : dict or None
-            Extra kwargs for :class:`GainSequence`.
-        overflow_bins : bool
-            Whether to add overflow bins. Default ``False``.
-        device : str or torch.device
-            Device for tensors.
-        record_every : int
-            Snapshot interval for bin counts history.
-
-        Returns
-        -------
-        SAMCWeights
-            Initialized weight manager with auto-detected energy range.
-        """
-        from illuma_samc.partitions import UniformPartition
-
-        # Run warmup MH with no weight correction
-        x = torch.zeros(dim, device=device)
-        raw = energy_fn(x)
-        if isinstance(raw, tuple):
-            fx = float(raw[0])
-        else:
-            fx = float(raw)
-
-        energies_seen = [fx]
-        for _ in range(warmup_steps):
-            x_new = x + proposal_std * torch.randn(dim, device=device)
-            raw = energy_fn(x_new)
-            if isinstance(raw, tuple):
-                fy, in_r = float(raw[0]), bool(raw[1])
-            else:
-                fy, in_r = float(raw), True
-
-            # Simple MH acceptance (no weight correction, T=1)
-            import math
-
-            log_r = -fy + fx
-            if in_r and (log_r > 0 or math.log(torch.rand(1).item() + 1e-300) < log_r):
-                x, fx = x_new.clone(), fy
-
-            energies_seen.append(fx)
-
-        e_min_obs = min(energies_seen)
-        e_max_obs = max(energies_seen)
-        span = e_max_obs - e_min_obs
-        if span < 1e-8:
-            span = 1.0  # avoid degenerate range
-
-        e_min = e_min_obs - margin * span
-        e_max = e_max_obs + margin * span
-
-        partition = UniformPartition(
-            e_min=e_min, e_max=e_max, n_bins=n_bins, overflow_bins=overflow_bins
-        )
-
-        # Build gain
-        if gain is None:
-            gain_schedule = "1/t"
-            gkw = {"t0": 1000}
-        else:
-            gain_schedule = gain
-            gkw = gain_kwargs or {}
-
-        if gain_kwargs is not None and gain is not None:
-            gkw = gain_kwargs
-
-        gain_obj = GainSequence(gain_schedule, **gkw)
-
-        return cls(
-            partition=partition,
-            gain=gain_obj,
-            device=device,
-            record_every=record_every,
-        )
 
     # ------------------------------------------------------------------
     # Partition resize support
@@ -324,60 +189,21 @@ class SAMCWeights:
     def _resize_for_partition(self) -> None:
         """Resize theta and counts to match current partition size.
 
-        Called after the partition expands (e.g., :class:`ExpandablePartition`,
-        :class:`GrowingPartition`). New bins get theta = 0 and counts = 0.
-
-        For :class:`GrowingPartition`, handles low-side growth by inserting
-        new bins after the low overflow bin (index 0) to preserve the
-        energy-to-weight correspondence.
+        Called after the partition expands (e.g., :class:`ExpandablePartition`).
+        New bins get theta = 0 and counts = 0.
         """
         n = self.partition.n_partitions
         old_n = self.theta.shape[0]
         if n == old_n:
             return
 
-        device = self.theta.device
-
-        # Check if GrowingPartition grew on the low side
-        grew_low = getattr(self.partition, "_grew_low_count", 0)
-
         if n > old_n:
             extra = n - old_n
-            if grew_low > 0:
-                # Insert zeros after the low overflow bin (index 0)
-                # to shift existing core bins to the right
-                low_insert = min(grew_low, extra)
-                high_insert = extra - low_insert
-                self.theta = torch.cat(
-                    [
-                        self.theta[:1],  # low overflow
-                        torch.zeros(low_insert, device=device, dtype=torch.float64),
-                        self.theta[1:],  # old core + high overflow
-                        torch.zeros(high_insert, device=device, dtype=torch.float64),
-                    ]
-                )
-                self.counts = torch.cat(
-                    [
-                        self.counts[:1],
-                        torch.zeros(low_insert, device=device, dtype=torch.float64),
-                        self.counts[1:],
-                        torch.zeros(high_insert, device=device, dtype=torch.float64),
-                    ]
-                )
-            else:
-                self.theta = torch.cat(
-                    [self.theta, torch.zeros(extra, device=device, dtype=torch.float64)]
-                )
-                self.counts = torch.cat(
-                    [self.counts, torch.zeros(extra, device=device, dtype=torch.float64)]
-                )
+            self.theta = torch.cat([self.theta, torch.zeros(extra, dtype=torch.float64)])
+            self.counts = torch.cat([self.counts, torch.zeros(extra, dtype=torch.float64)])
         else:
             self.theta = self.theta[:n]
             self.counts = self.counts[:n]
-
-        # Reset the low-growth counter
-        if hasattr(self.partition, "_grew_low_count"):
-            self.partition._grew_low_count = 0
 
         self._refden = 1.0 / n
 
