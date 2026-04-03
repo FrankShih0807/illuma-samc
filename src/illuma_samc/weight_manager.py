@@ -114,6 +114,11 @@ class SAMCWeights:
     ) -> None:
         self._device = torch.device(device)
         self._dtype = dtype if isinstance(dtype, torch.dtype) else getattr(torch, dtype)
+        if self._device.type == "mps" and self._dtype == torch.float64:
+            raise ValueError(
+                "MPS does not support float64. Use dtype='float32' (or omit dtype)"
+                " with device='mps'."
+            )
 
         if partition is not None:
             self.partition = partition

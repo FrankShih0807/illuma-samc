@@ -146,3 +146,56 @@ class TestMPSSAMCWeights:
         assert wm.theta.device.type == "cpu"  # theta always on CPU (MPS lacks float64)
         assert wm.counts.device.type == "cpu"
         assert wm.n_bins > 0
+
+
+class TestMPSDtype:
+    """Tests for dtype behavior on MPS device."""
+
+    def test_samc_mps_float32(self):
+        """SAMC with device='mps' and dtype='float32' runs and produces float32 samples."""
+        from illuma_samc.sampler import SAMC
+
+        sampler = SAMC(
+            energy_fn=_quadratic,
+            dim=2,
+            n_partitions=10,
+            e_min=0.0,
+            e_max=5.0,
+            device="mps",
+            dtype="float32",
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        result = sampler.run(n_steps=100, progress=False, seed=42)
+        assert result.samples.dtype == torch.float32
+        assert result.samples.device.type == "mps"
+
+    def test_samcweights_mps_float32(self):
+        """SAMCWeights with device='mps' and dtype='float32' stores float32 dtype."""
+        from illuma_samc import SAMCWeights
+
+        wm = SAMCWeights(device="mps", dtype="float32")
+        assert wm._dtype == torch.float32
+
+    def test_samc_mps_float64_raises(self):
+        """SAMC(device='mps', dtype='float64') raises ValueError."""
+        import pytest
+
+        from illuma_samc.sampler import SAMC
+
+        with pytest.raises(ValueError, match="MPS does not support float64"):
+            SAMC(
+                energy_fn=_quadratic,
+                dim=2,
+                device="mps",
+                dtype="float64",
+            )
+
+    def test_samcweights_mps_float64_raises(self):
+        """SAMCWeights(device='mps', dtype='float64') raises ValueError."""
+        import pytest
+
+        from illuma_samc import SAMCWeights
+
+        with pytest.raises(ValueError, match="MPS does not support float64"):
+            SAMCWeights(device="mps", dtype="float64")

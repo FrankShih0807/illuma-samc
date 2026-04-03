@@ -889,3 +889,77 @@ class TestAdaptiveProposal:
             dim=2,
         )
         assert sampler._proposal._adapt is False
+
+
+class TestDtypeDevice:
+    """Tests for dtype and device parameter propagation."""
+
+    @staticmethod
+    def _quadratic(x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 1:
+            return 0.5 * torch.sum(x**2)
+        return 0.5 * torch.sum(x**2, dim=-1)
+
+    def _make_sampler(self, **kwargs):
+        defaults = dict(
+            energy_fn=self._quadratic,
+            dim=2,
+            n_partitions=5,
+            e_min=0.0,
+            e_max=5.0,
+            gain="1/t",
+            gain_kwargs={"t0": 50},
+        )
+        defaults.update(kwargs)
+        return SAMC(**defaults)
+
+    def test_dtype_float64_samples(self):
+        """SAMC(dtype='float64') produces float64 samples."""
+        sampler = self._make_sampler(dtype="float64")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float64
+
+    def test_dtype_float32_default(self):
+        """SAMC with no dtype argument defaults to float32 samples."""
+        sampler = self._make_sampler()
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float32
+
+    def test_dtype_torch_object(self):
+        """dtype=torch.float32 also accepted."""
+        sampler = self._make_sampler(dtype=torch.float32)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float32
+
+    def test_x0_cast_to_dtype(self):
+        """float32 x0 is cast to float64 when dtype='float64'."""
+        sampler = self._make_sampler(dtype="float64")
+        x0 = torch.randn(2)  # float32
+        assert x0.dtype == torch.float32
+        result = sampler.run(n_steps=50, x0=x0, progress=False)
+        assert result.samples.dtype == torch.float64
+
+    def test_multi_chain_dtype_propagation(self):
+        """Multi-chain SAMC propagates dtype to all chain samples."""
+        sampler = self._make_sampler(dtype="float64", n_chains=2)
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.samples.dtype == torch.float64
+        assert result.samples.shape[0] == 2
+
+    def test_log_weights_always_float64(self):
+        """Internal log_weights stay float64 regardless of user dtype."""
+        sampler = self._make_sampler(dtype="float32")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.log_weights.dtype == torch.float64
+
+    def test_log_weights_float64_when_dtype_float64(self):
+        """log_weights also float64 when user requests float64."""
+        sampler = self._make_sampler(dtype="float64")
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.log_weights.dtype == torch.float64
+
+    def test_energy_history_on_cpu(self):
+        """energy_history is on CPU for CPU sampler."""
+        sampler = self._make_sampler()
+        result = sampler.run(n_steps=50, progress=False, seed=42)
+        assert result.energy_history.device.type == "cpu"

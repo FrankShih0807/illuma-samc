@@ -92,3 +92,35 @@ class TestSAMCConfig:
         cfg = SAMCConfig(n_bins=20, e_min=0.0, e_max=10.0)
         wm = cfg.build(record_every=50)
         assert wm._record_every == 50
+
+
+class TestDtype:
+    """Tests for dtype propagation through SAMCConfig."""
+
+    def test_build_weights_dtype_float64(self):
+        """SAMCConfig(dtype='float64').build() produces SAMCWeights with float64 dtype."""
+        cfg = SAMCConfig(dtype="float64")
+        wm = cfg.build()
+        assert wm._dtype == torch.float64
+
+    def test_build_sampler_dtype_float64(self):
+        """SAMCConfig(dtype='float64').build_sampler() produces SAMC with float64 dtype."""
+        cfg = SAMCConfig(dtype="float64")
+        sampler = cfg.build_sampler(energy_fn=_quadratic, dim=2)
+        assert sampler._dtype == torch.float64
+
+    def test_from_yaml_dtype(self):
+        """SAMCConfig.from_yaml() parses dtype field."""
+        import tempfile
+        from pathlib import Path
+
+        import yaml
+
+        data = {"model": {"n_partitions": 10, "e_min": 0.0, "e_max": 10.0, "dtype": "float64"}}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(data, f)
+            path = f.name
+
+        cfg = SAMCConfig.from_yaml(path, model="model")
+        assert cfg.dtype == "float64"
+        Path(path).unlink()

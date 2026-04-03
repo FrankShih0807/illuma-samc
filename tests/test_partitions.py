@@ -184,3 +184,30 @@ class TestExpandablePartition:
         p.assign(torch.tensor(15.0))
         assert p.edges.shape[0] == 16  # 15 bins + 1
         assert p.edges[-1].item() > old_edges[-1].item()
+
+
+class TestDevice:
+    """Tests for device parameter on partitions."""
+
+    def test_uniform_partition_device_cpu(self):
+        """UniformPartition edges are on the specified device."""
+        from illuma_samc.partitions import UniformPartition
+
+        p = UniformPartition(0, 10, 20, device="cpu")
+        assert p.edges.device.type == "cpu"
+
+    def test_expandable_partition_device_cpu(self):
+        """ExpandablePartition edges are on the specified device."""
+        from illuma_samc.partitions import ExpandablePartition
+
+        p = ExpandablePartition(0, 10, 20, device="cpu")
+        assert p.edges.device.type == "cpu"
+
+    def test_assign_batch_result_on_input_device(self):
+        """assign_batch result is on the same device as the input tensor."""
+        from illuma_samc.partitions import UniformPartition
+
+        p = UniformPartition(0, 10, 10, device="cpu")
+        energies = torch.tensor([1.0, 5.0, 9.0])
+        bins = p.assign_batch(energies)
+        assert bins.device.type == energies.device.type

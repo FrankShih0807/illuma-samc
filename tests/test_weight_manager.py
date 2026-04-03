@@ -500,3 +500,43 @@ class TestResizeForPartition:
         old_theta = wm.theta.clone()
         wm._resize_for_partition()
         assert torch.equal(wm.theta, old_theta)
+
+
+class TestDtype:
+    """Tests for dtype parameter on SAMCWeights."""
+
+    def test_dtype_float64_stored(self):
+        """SAMCWeights(dtype='float64') stores float64 dtype."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype="float64",
+        )
+        assert wm._dtype == torch.float64
+
+    def test_dtype_torch_float32(self):
+        """SAMCWeights(dtype=torch.float32) stores float32 dtype."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype=torch.float32,
+        )
+        assert wm._dtype == torch.float32
+
+    def test_theta_always_float64(self):
+        """Internal theta stays float64 regardless of user dtype."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype="float32",
+        )
+        assert wm.theta.dtype == torch.float64
+
+    def test_theta_float64_when_dtype_float64(self):
+        """theta is still float64 even if user requests float64."""
+        wm = SAMCWeights(
+            partition=UniformPartition(0, 10, 10),
+            gain=GainSequence("1/t", t0=50),
+            dtype="float64",
+        )
+        assert wm.theta.dtype == torch.float64
