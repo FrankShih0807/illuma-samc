@@ -621,74 +621,74 @@ and `SAMCWeights.__init__`: if device is MPS and dtype is float64, raise `ValueE
 with a clear message. Then test that guard.
 
 In `tests/test_sampler.py`, add a new test class `TestDtypeDevice`:
-- [ ] Test `SAMC(dtype="float64")` — verify `result.samples.dtype == torch.float64`
-- [ ] Test `SAMC(dtype=torch.float32)` — verify samples are float32 (default)
-- [ ] Test `SAMC(dtype="float64")` with `x0=torch.randn(2)` (float32 x0) — verify x0 is cast to float64
-- [ ] Test `SAMC(dtype="float64", n_chains=2)` — multi-chain dtype propagation
-- [ ] Test that `result.log_weights.dtype == torch.float64` always (internal accumulation stays float64 regardless of user dtype)
-- [ ] Test that `result.energy_history` is on the correct device
+- [x] Test `SAMC(dtype="float64")` — verify `result.samples.dtype == torch.float64`
+- [x] Test `SAMC(dtype=torch.float32)` — verify samples are float32 (default)
+- [x] Test `SAMC(dtype="float64")` with `x0=torch.randn(2)` (float32 x0) — verify x0 is cast to float64
+- [x] Test `SAMC(dtype="float64", n_chains=2)` — multi-chain dtype propagation
+- [x] Test that `result.log_weights.dtype == torch.float64` always (internal accumulation stays float64 regardless of user dtype)
+- [x] Test that `result.energy_history` is on the correct device
 
 In `tests/test_weight_manager.py`, add tests:
-- [ ] Test `SAMCWeights(dtype="float64")` — verify `wm._dtype == torch.float64`
-- [ ] Test `SAMCWeights(dtype=torch.float32)` — verify `wm._dtype == torch.float32`
-- [ ] Test that `wm.theta.dtype == torch.float64` always (internal, not user-controlled)
+- [x] Test `SAMCWeights(dtype="float64")` — verify `wm._dtype == torch.float64`
+- [x] Test `SAMCWeights(dtype=torch.float32)` — verify `wm._dtype == torch.float32`
+- [x] Test that `wm.theta.dtype == torch.float64` always (internal, not user-controlled)
 
 In `tests/test_config.py` (or existing config tests), add:
-- [ ] Test `SAMCConfig(dtype="float64").build()` — verify the built SAMCWeights has `_dtype == torch.float64`
-- [ ] Test `SAMCConfig(dtype="float64").build_sampler(energy_fn=..., dim=2)` — verify sampler has `_dtype == torch.float64`
-- [ ] Test `SAMCConfig.from_yaml()` with a YAML that includes `dtype: float64` — verify it's parsed
+- [x] Test `SAMCConfig(dtype="float64").build()` — verify the built SAMCWeights has `_dtype == torch.float64`
+- [x] Test `SAMCConfig(dtype="float64").build_sampler(energy_fn=..., dim=2)` — verify sampler has `_dtype == torch.float64`
+- [x] Test `SAMCConfig.from_yaml()` with a YAML that includes `dtype: float64` — verify it's parsed
 
 In `tests/test_partitions.py`, add tests:
-- [ ] Test `UniformPartition(0, 10, 20, device="cpu")` — verify `edges.device.type == "cpu"`
-- [ ] Test `ExpandablePartition(0, 10, 20, device="cpu")` — verify `edges.device.type == "cpu"`
-- [ ] Test that `assign_batch` result is on the same device as the input energies tensor
+- [x] Test `UniformPartition(0, 10, 20, device="cpu")` — verify `edges.device.type == "cpu"`
+- [x] Test `ExpandablePartition(0, 10, 20, device="cpu")` — verify `edges.device.type == "cpu"`
+- [x] Test that `assign_batch` result is on the same device as the input energies tensor
 
 In `tests/test_mps.py`, add MPS-specific dtype tests (skipped if no MPS):
-- [ ] Test `SAMC(device="mps", dtype="float32")` — verify samples are float32 on MPS
-- [ ] Test `SAMCWeights(device="mps", dtype="float32")` — verify dtype stored
-- [ ] Test `SAMC(device="mps", dtype="float64")` raises `ValueError` (MPS lacks float64)
-- [ ] Test `SAMCWeights(device="mps", dtype="float64")` raises `ValueError`
+- [x] Test `SAMC(device="mps", dtype="float32")` — verify samples are float32 on MPS
+- [x] Test `SAMCWeights(device="mps", dtype="float32")` — verify dtype stored
+- [x] Test `SAMC(device="mps", dtype="float64")` raises `ValueError` (MPS lacks float64)
+- [x] Test `SAMCWeights(device="mps", dtype="float64")` raises `ValueError`
 
 Run: `ruff format . && ruff check . && pytest -x -q`
-Commit: "Add dtype/device parameter tests"
+[x] Commit: "Add dtype/device parameter tests"
 
 ### Step 56: Fix baselines device/dtype (Worker)
 
 Add `device` and `dtype` parameters to baseline samplers so they work on GPU.
 
 In `src/illuma_samc/baselines/metropolis_hastings.py`:
-- [ ] Add `device` and `dtype` params to `run_mh()` and `_run_single_mh()`
-- [ ] Fix `torch.randn(dim)` → `torch.randn(dim, device=device, dtype=dtype)` in x0 init and proposals
-- [ ] Fix `torch.tensor(energies)` → `torch.tensor(energies, device=device)`
-- [ ] Fix `torch.empty(0, dim)` → `torch.empty(0, dim, device=device, dtype=dtype)`
+- [x] Add `device` and `dtype` params to `run_mh()` and `_run_single_mh()`
+- [x] Fix `torch.randn(dim)` → `torch.randn(dim, device=device, dtype=dtype)` in x0 init and proposals
+- [x] Fix `torch.tensor(energies)` → `torch.tensor(energies, device=device)`
+- [x] Fix `torch.empty(0, dim)` → `torch.empty(0, dim, device=device, dtype=dtype)`
 
 In `src/illuma_samc/baselines/parallel_tempering.py`:
-- [ ] Add `device` and `dtype` params to `run_parallel_tempering()`
-- [ ] Fix `torch.randn(dim)` → `torch.randn(dim, device=device, dtype=dtype)` in state init and proposals
-- [ ] Fix `torch.tensor(energies_list[0])` and `torch.empty(0, dim)` to use device/dtype
+- [x] Add `device` and `dtype` params to `run_parallel_tempering()`
+- [x] Fix `torch.randn(dim)` → `torch.randn(dim, device=device, dtype=dtype)` in state init and proposals
+- [x] Fix `torch.tensor(energies_list[0])` and `torch.empty(0, dim)` to use device/dtype
 
 Run: `ruff format . && ruff check . && pytest -x -q`
-Commit: "Add device/dtype to MH and PT baselines"
+[x] Commit: "Add device/dtype to MH and PT baselines"
 
 ### Step 57: Fix diagnostics device safety (Worker)
 
 In `src/illuma_samc/diagnostics.py`:
-- [ ] Fix `torch.zeros(rolling_window - 1)` → add `.to(changed.device)` or explicit device
-- [ ] Fix `torch.ones(rolling_window)` → same
-- [ ] These only matter when energy_history is on GPU; ensure `.cpu()` is called before numpy conversion (already done for most tensors, verify completeness)
+- [x] Fix `torch.zeros(rolling_window - 1)` → add `.to(changed.device)` or explicit device
+- [x] Fix `torch.ones(rolling_window)` → same
+- [x] These only matter when energy_history is on GPU; ensure `.cpu()` is called before numpy conversion (already done for most tensors, verify completeness)
 
 Run: `ruff format . && ruff check . && pytest -x -q`
-Commit: "Fix diagnostics tensor device for GPU compatibility"
+[x] Commit: "Fix diagnostics tensor device for GPU compatibility"
 
 ### Step 58: Update docs and examples (Worker)
 
-- [ ] Update docstrings in `SAMCConfig`, `SAMC`, `SAMCWeights` to document `dtype` parameter
-- [ ] Add a GPU usage example to `examples/` or update existing example with `device`/`dtype` usage comment
-- [ ] Update `docs/quickstart.rst` if it exists — mention `device` and `dtype`
-- [ ] Verify all README code snippets still work with the new params
+- [x] Update docstrings in `SAMCConfig`, `SAMC`, `SAMCWeights` to document `dtype` parameter
+- [x] Add a GPU usage example to `examples/` or update existing example with `device`/`dtype` usage comment
+- [x] Update `docs/quickstart.rst` if it exists — mention `device` and `dtype`
+- [x] Verify all README code snippets still work with the new params
 
 Run: `ruff format . && ruff check . && pytest -x -q`
-Commit: "Document dtype/device parameters"
+[x] Commit: "Document dtype/device parameters"
 
 ### Step 59: Inspector review (Inspector)
 

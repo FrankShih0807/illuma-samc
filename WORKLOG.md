@@ -1,5 +1,18 @@
 # illuma-samc Work Log
 
+## [2026-04-03] Phase 5.8: Steps 55-58 — dtype/device tests, baselines, diagnostics, docs (session: 20260403-145548-41652)
+- **State:** generalizing
+- **Status:** done (Steps 55-58 complete, Step 59 Inspector pending)
+- **Summary:**
+  - Committed L2's Phase 5.8 core changes (dtype/device in config, sampler, weight_manager, partitions) + marked Steps 52/53 done.
+  - Step 55: Added MPS/float64 guard (ValueError) to SAMC and SAMCWeights. Added TestDtypeDevice (test_sampler.py), TestDtype (test_weight_manager.py, test_config.py), TestDevice (test_partitions.py), TestMPSDtype (test_mps.py). 22 new tests.
+  - Step 56: Added `device`/`dtype` params to `run_mh`, `_run_single_mh`, `run_parallel_tempering`. All tensor creation (init, proposals, outputs) uses specified device/dtype.
+  - Step 57: Fixed missing `.cpu()` on multi-chain energy list paths in `diagnostics.py`. Added `.to(changed.device)` on rolling-window tensors.
+  - Step 58: Updated docstrings (already done by L2), added GPU/dtype section to `docs/quickstart.rst`, added GPU usage comment to `examples/gaussian_mixture.py`.
+  - All 179 tests pass, ruff clean.
+- **Decisions made:** None — all architectural decisions were made by L2 in prior session.
+- **Blocked on:** Nothing. Step 59 Inspector review is next.
+
 ## [2026-04-03] Phase 5.8: GPU compatibility — dtype/device propagation
 - **State:** generalizing
 - **Status:** core implementation done, L3 worker tasks pending
