@@ -23,3 +23,4 @@ __pycache__/
 # Generated example/reference outputs
 examples/*.png
 reference/*.png
+docs/_build/
