@@ -319,13 +319,32 @@ class SAMC:
         """
         if self._energy_fn is None:
             raise RuntimeError("No energy_fn provided — cannot compute energy")
+        n = x.shape[0]
         result = self._energy_fn(x)
-        if isinstance(result, tuple):
-            energy, in_region = result
+        is_tuple = isinstance(result, tuple)
+        energy = result[0] if is_tuple else result
+        energy = energy.view(-1)
+
+        # If energy_fn doesn't support batched input (returned fewer elements
+        # than N), fall back to per-sample evaluation.
+        if energy.numel() != n:
+            energies = []
+            in_regions = []
+            for i in range(n):
+                e, ir = self._compute_energy(x[i])
+                energies.append(e)
+                in_regions.append(ir)
+            return (
+                torch.stack(energies),
+                torch.tensor(in_regions, dtype=torch.bool, device=x.device),
+            )
+
+        if is_tuple:
+            in_region = result[1]
             if not isinstance(in_region, torch.Tensor):
                 in_region = torch.tensor(in_region, dtype=torch.bool, device=x.device)
-            return energy.view(-1), in_region.view(-1).bool()
-        return result.view(-1), torch.ones(x.shape[0], dtype=torch.bool, device=x.device)
+            return energy, in_region.view(-1).bool()
+        return energy, torch.ones(n, dtype=torch.bool, device=x.device)
 
     def run(
         self,
