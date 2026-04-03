@@ -49,3 +49,30 @@ Load from YAML:
 .. code-block:: python
 
     cfg = SAMCConfig.from_yaml("configs/samc.yaml", model="2d")
+
+GPU / dtype support
+--------------------
+
+Pass ``device`` and ``dtype`` to run on GPU or change precision:
+
+.. code-block:: python
+
+    from illuma_samc import SAMC, SAMCWeights
+
+    # Run on Apple Silicon GPU with float32 (MPS does not support float64)
+    sampler = SAMC(energy_fn=my_energy, dim=10, device="mps", dtype="float32")
+    result = sampler.run(n_steps=100_000)
+    # result.samples.device → mps, result.samples.dtype → float32
+
+    # Run with float64 precision on CPU
+    sampler = SAMC(energy_fn=my_energy, dim=10, dtype="float64")
+    result = sampler.run(n_steps=100_000)
+
+    # SAMCWeights also accepts device and dtype
+    wm = SAMCWeights(device="cuda", dtype="float32")
+
+.. note::
+    Internal SAMC accumulators (theta, counts) always use ``float64`` regardless
+    of the user-specified ``dtype``.  ``dtype`` controls sample tensors only.
+    MPS does not support ``float64``; passing ``device="mps", dtype="float64"``
+    raises a ``ValueError``.
