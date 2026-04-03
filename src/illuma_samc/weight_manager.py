@@ -94,6 +94,9 @@ class SAMCWeights:
         Extra kwargs for :class:`GainSequence` (when ``gain`` is a string).
     device : str or torch.device
         Device for theta and counts tensors. Default ``"cpu"``.
+    dtype : str or torch.dtype
+        Dtype for sample-facing tensors (e.g. ``"float32"``, ``torch.float64``).
+        Internal accumulation (theta, counts) always uses float64 for precision.
     """
 
     def __init__(
@@ -106,9 +109,11 @@ class SAMCWeights:
         gain: GainSequence | str | None = None,
         gain_kwargs: dict | None = None,
         device: torch.device | str = "cpu",
+        dtype: str | torch.dtype = torch.float32,
         record_every: int = 100,
     ) -> None:
         self._device = torch.device(device)
+        self._dtype = dtype if isinstance(dtype, torch.dtype) else getattr(torch, dtype)
 
         if partition is not None:
             self.partition = partition
@@ -274,7 +279,11 @@ class SAMCWeights:
             ky = self.partition.assign_batch(energy_proposed)
             self._maybe_resize()
 
-            result = torch.zeros(energy_current.shape[0], dtype=self.theta.dtype)
+            result = torch.zeros(
+                energy_current.shape[0],
+                dtype=self.theta.dtype,
+                device=energy_current.device,
+            )
             both_in = (kx >= 0) & (ky >= 0)
             result[both_in] = self.theta[kx[both_in]] - self.theta[ky[both_in]]
             result[(kx >= 0) & (ky < 0)] = float("-inf")
@@ -286,9 +295,9 @@ class SAMCWeights:
         ex = float(energy_current)
         ey = float(energy_proposed)
 
-        kx = self.partition.assign(torch.tensor(ex))
+        kx = self.partition.assign(torch.tensor(ex, device=self._device))
         self._maybe_resize()
-        ky = self.partition.assign(torch.tensor(ey))
+        ky = self.partition.assign(torch.tensor(ey, device=self._device))
         self._maybe_resize()
 
         if ky < 0:
@@ -380,7 +389,7 @@ class SAMCWeights:
                     )
                 warnings.warn(msg, stacklevel=2)
 
-        k = self.partition.assign(torch.tensor(e))
+        k = self.partition.assign(torch.tensor(e, device=self._device))
         self._maybe_resize()
 
         if k < 0:
@@ -538,7 +547,7 @@ class SAMCWeights:
         log_w_shifted = log_w_shifted - log_w[valid].max()
         p = torch.exp(log_w_shifted)
 
-        keep = torch.rand(len(samples)) < p
+        keep = torch.rand(len(samples), device=samples.device) < p
         return samples[keep]
 
     def plot_diagnostics(self, **kwargs: object) -> object:

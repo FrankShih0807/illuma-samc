@@ -127,6 +127,9 @@ class SAMC:
         Gain schedule. Defaults to ``"ramp"`` matching sample_code.py.
     device : str or torch.device
         Device for tensors.
+    dtype : str or torch.dtype
+        Dtype for sample tensors (e.g. ``torch.float32``, ``"float64"``).
+        Internal accumulation (theta, counts) always uses float64.
     proposal_fn : Proposal, optional
         Custom proposal (flexible mode).
     log_accept_fn : callable, optional
@@ -158,6 +161,7 @@ class SAMC:
         temperature: float = 1.0,
         gain: GainSequence | str = "ramp",
         device: str | torch.device = "cpu",
+        dtype: str | torch.dtype = torch.float32,
         proposal_fn: Proposal | None = None,
         log_accept_fn: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], float]
         | None = None,
@@ -195,6 +199,7 @@ class SAMC:
             raise ValueError("temperature must be positive")
 
         self._device = torch.device(device)
+        self._dtype = dtype if isinstance(dtype, torch.dtype) else getattr(torch, dtype)
         self._dim = dim
         self._n_chains = n_chains
         self._shared_weights = shared_weights
@@ -400,7 +405,7 @@ class SAMC:
                 f"Either match x0 shape or omit x0 to auto-initialize."
             )
         if n_chains > 1 and x0 is None:
-            x0 = torch.zeros(n_chains, self._dim, device=self._device)
+            x0 = torch.zeros(n_chains, self._dim, device=self._device, dtype=self._dtype)
 
         if n_chains > 1:
             if self._shared_weights:
@@ -439,7 +444,10 @@ class SAMC:
         device = self._device
 
         # Initialize state
-        x = x0.to(device).clone() if x0 is not None else torch.zeros(self._dim, device=device)
+        if x0 is not None:
+            x = x0.to(device=device, dtype=self._dtype).clone()
+        else:
+            x = torch.zeros(self._dim, device=device, dtype=self._dtype)
 
         fx, in_region = self._compute_energy(x)
 
@@ -565,7 +573,9 @@ class SAMC:
             )
 
         samples_tensor = (
-            torch.stack(samples) if samples else torch.empty(0, self._dim, device=device)
+            torch.stack(samples)
+            if samples
+            else torch.empty(0, self._dim, device=device, dtype=self._dtype)
         )
 
         # Per-sample importance log-weights: +theta[bin] reweights from flat to target.
@@ -708,7 +718,7 @@ class SAMC:
         n_chains = x0.shape[0]
 
         # Initialize states — shape (N, dim)
-        x = x0.to(device).clone()
+        x = x0.to(device=device, dtype=self._dtype).clone()
 
         fx, in_region = self._compute_energy_batch(x)  # (N,), (N,)
 
@@ -854,7 +864,7 @@ class SAMC:
             stacked = torch.stack(samples)  # (n_saved, N, dim)
             samples_tensor = stacked.permute(1, 0, 2)  # (N, n_saved, dim)
         else:
-            samples_tensor = torch.empty(n_chains, 0, self._dim, device=device)
+            samples_tensor = torch.empty(n_chains, 0, self._dim, device=device, dtype=self._dtype)
 
         # Per-sample importance log-weights: +theta[bin] → (N, n_saved)
         # SAMC samples from exp(-E/T - theta[k]), weight by exp(+theta[k]).

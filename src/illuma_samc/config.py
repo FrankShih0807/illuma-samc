@@ -66,6 +66,8 @@ class SAMCConfig:
         Add overflow bins at partition edges.
     device : str
         Torch device.
+    dtype : str
+        Torch dtype for sample tensors (e.g. ``"float32"``, ``"float64"``).
     """
 
     n_bins: int = 42
@@ -90,6 +92,7 @@ class SAMCConfig:
     n_iters: int = 100_000
     overflow_bins: bool = False
     device: str = "cpu"
+    dtype: str = "float32"
 
     @classmethod
     def from_yaml(cls, path: str | Path, model: str | None = None) -> "SAMCConfig":
@@ -127,6 +130,7 @@ class SAMCConfig:
             "n_chains": "n_chains",
             "overflow_bins": "overflow_bins",
             "device": "device",
+            "dtype": "dtype",
             "adapt_proposal": "adapt_proposal",
             "adapt_warmup": "adapt_warmup",
             "target_accept_rate": "target_accept_rate",
@@ -166,11 +170,13 @@ class SAMCConfig:
                 self.e_max,
                 self.n_bins,
                 overflow_bins=self.overflow_bins,
+                device=self.device,
             )
             return SAMCWeights(
                 partition=partition,
                 gain=gain,
                 device=self.device,
+                dtype=self.dtype,
                 **overrides,
             )
         else:
@@ -178,6 +184,7 @@ class SAMCConfig:
             return SAMCWeights(
                 gain=gain,
                 device=self.device,
+                dtype=self.dtype,
                 **overrides,
             )
 
@@ -211,6 +218,7 @@ class SAMCConfig:
             "temperature": self.temperature,
             "gain": self._build_gain(),
             "device": self.device,
+            "dtype": self.dtype,
             "n_chains": self.n_chains,
         }
         if self.e_min is not None and self.e_max is not None:

@@ -1,7 +1,7 @@
-state: ready for release
-methodology_phase: 5 complete
+state: generalizing
+methodology_phase: 5
 status: active
-last_session: 2026-04-02
-focus: All pre-PyPI work complete (adaptive proposal, MPS, high-dim benchmarks, API docs, SAMCConfig)
+last_session: 2026-04-03
+focus: Phase 5.8 GPU compatibility — dtype/device propagation (core done, tests/baselines/docs pending)
 blocked: no
-next: Step 43 PyPI release (Phase 6)
+next: Steps 55-59 (L3 worker: tests, baselines, diagnostics, docs, inspector review)

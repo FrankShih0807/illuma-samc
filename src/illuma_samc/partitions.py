@@ -21,7 +21,7 @@ class Partition(ABC):
         Default implementation calls :meth:`assign` in a loop; subclasses
         may override for efficiency.
         """
-        result = torch.empty(energies.shape[0], dtype=torch.long)
+        result = torch.empty(energies.shape[0], dtype=torch.long, device=energies.device)
         for i in range(energies.shape[0]):
             result[i] = self.assign(energies[i])
         return result
@@ -52,6 +52,8 @@ class UniformPartition(Partition):
         If ``True``, add two catch-all bins: ``[-inf, e_min]`` (bin 0) and
         ``[e_max, +inf]`` (last bin). The original bins are shifted by 1.
         Default ``False`` for backward compatibility.
+    device : str or torch.device
+        Device for edge tensors. Default ``"cpu"``.
     """
 
     def __init__(
@@ -60,22 +62,24 @@ class UniformPartition(Partition):
         e_max: float,
         n_bins: int,
         overflow_bins: bool = False,
+        device: torch.device | str = "cpu",
     ) -> None:
         if e_min >= e_max:
             raise ValueError(f"e_min ({e_min}) must be less than e_max ({e_max})")
         if n_bins < 1:
             raise ValueError(f"n_bins must be >= 1, got {n_bins}")
+        self._device = torch.device(device)
         self._e_min = e_min
         self._e_max = e_max
         self._n_bins_core = n_bins
         self._overflow_bins = overflow_bins
         self._scale = n_bins / (e_max - e_min)
 
-        inner_edges = torch.linspace(e_min, e_max, n_bins + 1)
+        inner_edges = torch.linspace(e_min, e_max, n_bins + 1, device=self._device)
         if overflow_bins:
-            self._edges = torch.cat(
-                [torch.tensor([float("-inf")]), inner_edges, torch.tensor([float("inf")])]
-            )
+            neg_inf = torch.tensor([float("-inf")], device=self._device)
+            pos_inf = torch.tensor([float("inf")], device=self._device)
+            self._edges = torch.cat([neg_inf, inner_edges, pos_inf])
         else:
             self._edges = inner_edges
 
@@ -155,14 +159,16 @@ class ExpandablePartition(Partition):
         n_bins: int,
         expand_step: int = 5,
         max_bins: int = 200,
+        device: torch.device | str = "cpu",
     ) -> None:
+        self._device = torch.device(device)
         self._e_min = e_min
         self._e_max = e_max
         self._n_bins = n_bins
         self._expand_step = expand_step
         self._max_bins = max_bins
         self._bin_width = (e_max - e_min) / n_bins
-        self._edges = torch.linspace(e_min, e_max, n_bins + 1)
+        self._edges = torch.linspace(e_min, e_max, n_bins + 1, device=self._device)
         self.expanded = False  # flag for callers to check
 
     def _expand_low(self, energy: float) -> None:
@@ -172,7 +178,9 @@ class ExpandablePartition(Partition):
         add = min(self._expand_step, self._max_bins - self._n_bins)
         self._e_min = self._e_min - add * self._bin_width
         self._n_bins += add
-        self._edges = torch.linspace(self._e_min, self._e_max, self._n_bins + 1)
+        self._edges = torch.linspace(
+            self._e_min, self._e_max, self._n_bins + 1, device=self._device
+        )
         self.expanded = True
 
     def _expand_high(self, energy: float) -> None:
@@ -182,7 +190,9 @@ class ExpandablePartition(Partition):
         add = min(self._expand_step, self._max_bins - self._n_bins)
         self._e_max = self._e_max + add * self._bin_width
         self._n_bins += add
-        self._edges = torch.linspace(self._e_min, self._e_max, self._n_bins + 1)
+        self._edges = torch.linspace(
+            self._e_min, self._e_max, self._n_bins + 1, device=self._device
+        )
         self.expanded = True
 
     def assign(self, energy: torch.Tensor) -> int:

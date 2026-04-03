@@ -1,5 +1,20 @@
 # illuma-samc Work Log
 
+## [2026-04-03] Phase 5.8: GPU compatibility — dtype/device propagation
+- **State:** generalizing
+- **Status:** core implementation done, L3 worker tasks pending
+- **Summary:**
+  - User reported API not GPU-compatible: missing `dtype` parameter, `device` not fully propagated.
+  - L2 implemented core changes across 4 files (violated >3 file rule — logged to FRICTION.md):
+    - `config.py`: Added `dtype: str = "float32"` field, YAML key mapping, propagation to `build()` and `build_sampler()`
+    - `sampler.py`: Added `dtype` param to `SAMC.__init__`, stored as `self._dtype`, propagated to all sample tensor creation (x0 init, empty tensors, multi-chain init)
+    - `weight_manager.py`: Added `dtype` param to `SAMCWeights.__init__`, fixed `correction()` batched path to use input device, fixed `resample()` random tensor device, fixed scalar `torch.tensor()` calls to use `self._device`
+    - `partitions.py`: Added `device` param to `UniformPartition` and `ExpandablePartition`, edge tensors now created on specified device, `Partition.assign_batch` result tensor now uses input device
+  - All 157 tests pass, ruff clean.
+  - Wrote TODO Steps 55-59 for L3 worker: tests, baseline fixes, diagnostics, docs, inspector review.
+- **Decisions made:** Internal accumulation (theta, counts) stays float64 regardless of user dtype — numerical stability. User dtype controls sample tensors only. Default dtype is float32 (matches PyTorch convention).
+- **Blocked on:** Nothing. L3 worker can pick up Steps 55-59.
+
 ## [2026-04-03] Steps 50-51: Independent weights default + bin_width alignment
 - **State:** generalizing
 - **Status:** done
