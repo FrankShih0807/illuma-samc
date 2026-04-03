@@ -1,5 +1,17 @@
 # illuma-samc Work Log
 
+## [2026-04-03] Steps 43-45: Robust Defaults Validation
+- **State:** generalizing
+- **Status:** done
+- **Summary:**
+  - Step 43: Created and ran `ablation/robust_defaults.py` — 60 runs (6 problems x 2 configs x 5 seeds). Both configs: (A) zero-config with `adapt_proposal=True`, (B) hand-tuned ablation winners from Steps 24-28.
+  - Step 44: Created `ablation/analyze_robust_defaults.py` and generated `ablation/reports/robust_defaults.md`. Key finding: zero-config matches hand-tuned on 2D, Rosenbrock, Rastrigin (0% gap); but is 49%/114%/305% worse on 10D/50D/100D Gaussian mixtures where energy range matters.
+  - Step 45: Updated README Tuning Guide — added "Zero-Config Quick Start" section with validation table, updated sensitivity ranking to reflect `proposal_std` and low-dim energy range are now auto-handled.
+- **Decisions made:**
+  - Energy range threshold: define "near-zero" as < 1e-4 (not 1e-8) to avoid floating point noise on problems with E≈0 showing spurious -90%+ gaps.
+  - Kept the 10D gap in report (49%) as "NEEDS TUNING" even though it's marginal — the threshold is 10% and should stay conservative.
+- **Blocked on:** Nothing.
+
 ## [2026-04-02] v0.2.0: Batch support, zero-config defaults, API cleanup
 - **Phase:** generalizing
 - **Status:** done

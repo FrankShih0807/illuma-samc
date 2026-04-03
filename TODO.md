@@ -276,8 +276,9 @@ For UX improvements and input validation, the same pipeline applies:
 ### Step 29: Production Hardening (after ablation insights)
 > Informed by ablation results — implement the features that actually matter.
 
-- [ ] Adaptive proposal tuning: auto-tune proposal_std targeting optimal acceptance rate (informed by ablation)
-- [ ] Update README with ablation results, tuning guide, and recommendations
+- [x] Adaptive proposal tuning: dual-averaging on GaussianProposal, `adapt_proposal=True` on SAMC, converges to ~0.05-0.11 from any starting point
+- [x] Update README with ablation results, tuning guide, and recommendations
+- [x] MPS compatibility: theta/counts moved to CPU (MPS lacks float64), 6 smoke tests passing (single/multi-chain, Langevin, adaptive, SAMCWeights)
 
 ## Phase 4: SAMCWeights Product Polish
 
@@ -311,23 +312,18 @@ For UX improvements and input validation, the same pipeline applies:
 - [x] Add `tracked_acceptance_rate` property for user inspection
 - [x] Keep it advisory — SAMCWeights doesn't own the proposal, just nudges the user
 
-### Step 35: PyPI Release (P2)
-- [ ] Add `python -m build` + twine upload to CI (or GitHub trusted publishing)
-- [ ] Verify `pip install illuma-samc` works from PyPI
-- [ ] Add installation badge to README
+### Step 35: High-Dim Benchmarks (P2)
+- [x] Add 50D and 100D Gaussian mixture problems
+- [x] Run SAMC vs MH vs PT with 3 seeds each on 10D/50D/100D
+- [x] SAMC 4.5x better than MH at 50D, 5.5x at 100D; results in README
 
-### Step 36: High-Dim Benchmarks (P2)
-- [ ] Add 50D and 100D benchmark problems
-- [ ] Run SAMC vs MH vs PT with multiple seeds, report mean ± std
-- [ ] Add results to README or separate benchmark doc
-
-### Step 37: README & Discoverability (P2)
+### Step 36: README & Discoverability (P2)
 - [x] Link `examples/mh_vs_samc.ipynb` from README (already linked in two places)
 - [x] Add "Why SAMC?" conceptual section (already present as "How It Works" section)
 
-### Step 38: API Docs & Config (P3)
-- [ ] Generate API docs with Sphinx, host on ReadTheDocs
-- [ ] Add `SAMCWeights.from_config(yaml_path)` or `SAMCConfig` dataclass to reduce partition+gain boilerplate
+### Step 37: API Docs & Config (P3)
+- [x] Generate API docs with Sphinx, `.readthedocs.yaml` configured, builds cleanly
+- [x] `SAMCConfig` dataclass: `from_yaml()`, `build()` → SAMCWeights, `build_sampler()` → SAMC
 
 ## Phase 5: Robust Energy Bin Selection
 
@@ -357,3 +353,101 @@ For UX improvements and input validation, the same pipeline applies:
 - [x] Add `--overflow_bins`, `--auto_range`, `--expandable` flags to `train.py`
 - [x] Run ablations on all 4 problems x 5 scenarios x 4 methods x 3 seeds (240 runs)
 - [x] Write analysis to `ablation/reports/robust_bins_insights.md`
+
+## Phase 5.5: Robust Defaults Validation
+
+> Do users need to tune anything, or do adaptive proposal + auto bins just work?
+> The ablation studies (Steps 24-28) were done BEFORE adaptive proposal and robust bins.
+> This phase validates that the robust version matches the hand-tuned ablation winners.
+
+### Step 43: Create Benchmark Script (Worker)
+
+Create `ablation/robust_defaults.py` that runs two configs per problem:
+
+**Config A — "Robust Defaults" (zero tuning):**
+Uses `SAMC` class with `adapt_proposal=True` and NO explicit `e_min`/`e_max` (auto-range warmup).
+User only specifies `energy_fn`, `dim`, and `n_chains=4`. Everything else is default.
+
+```python
+sampler = SAMC(
+    energy_fn=fn, dim=dim, n_chains=4,
+    adapt_proposal=True, adapt_warmup=2000,
+    # no e_min, e_max, proposal_std, gain — all defaults
+)
+```
+
+**Config B — "Hand-Tuned Ablation Winner" (from ablation reports):**
+Best SAMC config per problem from Steps 24-28:
+
+| Problem | proposal_std | gain | n_partitions | e_min | e_max | n_chains | shared |
+|---------|-------------|------|-------------|-------|-------|----------|--------|
+| 2d | 0.1 | ramp | 42 | -8.2 | 0.0 | 4 | shared |
+| rosenbrock | 0.1 | ramp | 30 | 0.0 | 500 | 8 | independent |
+| 10d | 1.0 | ramp | 30 | 0.0 | 20 | 4 | shared |
+| rastrigin | 0.5 | ramp | 40 | 0.0 | 500 | 16 | shared |
+| 50d | 0.5 | ramp | 40 | 0.0 | 60 | 4 | shared |
+| 100d | 0.3 | ramp | 50 | 0.0 | 60 | 4 | shared |
+
+**Run parameters:**
+- 5 seeds: 42, 123, 456, 789, 999
+- Iterations: 500K for 2d/rosenbrock, 200K for 10d/50d/100d/rastrigin
+- Metrics per run: best_energy, acceptance_rate, flatness, final_proposal_std (for adaptive), wall_time
+
+**Output:** Save all results to `ablation/outputs/robust_defaults/` as JSON per run.
+
+Worker checklist:
+- [ ] Create `ablation/robust_defaults.py` with both configs
+- [ ] Verify it runs on 2d with 1 seed (smoke test) before full run
+- [ ] Run all 6 problems x 2 configs x 5 seeds = 60 runs
+- [ ] Print summary table to stdout
+
+### Step 44: Analyze Results and Write Report (Worker)
+
+Create `ablation/analyze_robust_defaults.py` that:
+- [ ] Loads all JSON results from `ablation/outputs/robust_defaults/`
+- [ ] Computes mean +/- std per (problem, config) group
+- [ ] Generates comparison table: robust defaults vs hand-tuned per problem
+- [ ] Computes "gap" = (robust_energy - tuned_energy) / |tuned_energy| as % degradation
+- [ ] Writes `ablation/reports/robust_defaults.md` with:
+  - Summary table (problem x config x metrics)
+  - Per-problem analysis: where does auto-tuning match? Where does it fall short?
+  - Final verdict: what (if anything) do users still need to tune?
+  - Recommended "minimal tuning" guide: which 1-2 params matter if defaults aren't enough
+
+Worker checklist:
+- [ ] Script runs cleanly on the Step 43 outputs
+- [ ] Report includes all 6 problems
+- [ ] Report has a clear verdict section
+
+### Step 45: Update README Tuning Guide (Worker)
+
+Based on the Step 44 report:
+- [ ] If robust defaults match within 10%: simplify tuning guide to "just use defaults"
+- [ ] If some problems need tuning: list only the params that matter
+- [ ] Update the sensitivity ranking to reflect that #1 and #2 are now auto-handled
+- [ ] Add a "Zero-Config Quick Start" example using robust defaults
+- [ ] Remove or demote advice that's no longer relevant
+
+Worker checklist:
+- [ ] README tuning section is updated
+- [ ] No stale advice remains from pre-robust ablations
+
+### Step 46: Inspector Review
+
+Inspector verifies:
+- [ ] `ablation/robust_defaults.py` uses correct hand-tuned configs (cross-check against ablation reports)
+- [ ] Robust defaults config truly uses NO manual tuning (no hardcoded e_min/e_max/proposal_std)
+- [ ] Results are reproducible (rerun 1 problem, 1 seed, verify match)
+- [ ] Report conclusions are supported by the data (no cherry-picking)
+- [ ] README tuning guide is consistent with report findings
+- [ ] All tests still pass (`pytest -v`)
+- [ ] Ruff clean (`ruff check .`)
+
+## Phase 6: PyPI Release
+
+> Ship only after everything else is done and API is stable.
+
+### Step 43: PyPI Release
+- [ ] Add `python -m build` + twine upload to CI (or GitHub trusted publishing)
+- [ ] Verify `pip install illuma-samc` works from PyPI
+- [ ] Add installation badge to README

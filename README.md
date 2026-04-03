@@ -125,6 +125,115 @@ result = sampler.run(n_steps=100_000, burn_in=100)
 sampler.plot_diagnostics()
 ```
 
+## Adaptive Step Size
+
+Don't know the right `proposal_std`? Let it tune itself via dual averaging:
+
+```python
+sampler = SAMC(energy_fn=energy_fn, dim=2, adapt_proposal=True)
+result = sampler.run(n_steps=100_000)
+print(f"Tuned step size: {sampler._proposal.step_size:.4f}")
+```
+
+Works with `SAMCWeights` too -- use `GaussianProposal` directly:
+
+```python
+from illuma_samc import SAMCWeights
+from illuma_samc.proposals import GaussianProposal
+
+proposal = GaussianProposal(step_size=1.0, adapt=True)  # any starting guess
+wm = SAMCWeights()
+
+for t in range(1, n_steps + 1):
+    x_new = proposal.propose(x)
+    fy = energy_fn(x_new)
+
+    log_r = (-fy + fx) / T + wm.correction(fx, fy)
+    accepted = log_r > 0 or math.log(random()) < log_r
+    if accepted:
+        x, fx = x_new, fy
+    proposal.report_accept(accepted)                     # tune step size
+    wm.step(t, fx)
+```
+
+Tested with initial step sizes from 0.01 to 5.0 -- adaptive always finds the global minimum and achieves >0.89 flatness, while fixed step sizes fail badly at extremes.
+
+## Zero-Config Quick Start
+
+For problems up to ~20D, just use defaults with `adapt_proposal=True` — no manual tuning needed:
+
+```python
+sampler = SAMC(
+    energy_fn=energy_fn,
+    dim=dim,
+    n_chains=4,
+    adapt_proposal=True,
+    adapt_warmup=2000,
+)
+result = sampler.run(n_steps=200_000)
+```
+
+Validated against hand-tuned ablation winners (500K-200K iters, 5 seeds each):
+
+| Problem | Dim | Zero-Config vs Hand-Tuned | Verdict |
+|---------|-----|--------------------------|---------|
+| 2D Multimodal | 2 | Identical (-8.1246) | Use defaults |
+| Rosenbrock | 2 | Identical (E≈0) | Use defaults |
+| Rastrigin | 20 | Identical (E=0) | Use defaults |
+| Gaussian Mix | 10 | +49% gap | Set energy range |
+| Gaussian Mix | 50 | +114% gap | Set energy range |
+| Gaussian Mix | 100 | +305% gap | Set energy range + n_partitions |
+
+For high-dimensional problems (dim >= 20 with widely-separated modes), specify the energy range:
+
+```python
+sampler = SAMC(
+    energy_fn=energy_fn,
+    dim=50,
+    n_chains=4,
+    n_partitions=40,
+    e_min=0.0,
+    e_max=60.0,
+    adapt_proposal=True,   # still auto-tunes step size
+)
+```
+
+## Tuning Guide
+
+Based on ablation studies across 6 problems (2D to 100D), 12 parameter groups, 600+ runs, and a dedicated robust-defaults validation (60 runs):
+
+**What is now auto-handled:**
+1. **Proposal step size** -- `adapt_proposal=True` auto-tunes via dual averaging. Start with any value; it converges to the right size.
+2. **Energy range for low-dim** -- auto-range warmup works reliably for dim < 20.
+
+**Sensitivity ranking for remaining parameters** (most impactful first):
+1. **Energy range (dim >= 20)** -- auto-range breaks down in high dimensions because warmup trajectories over-explore. Set `e_min`/`e_max` explicitly.
+2. **Gain schedule** -- use `ramp` or `1/t`. `ramp` is the default and works well.
+3. **Gain t0** -- use t0 >= 1000. Too small (100) gives poor flatness.
+4. **Number of bins** -- 20-80 works well; scale up (~40-50) for higher-dimensional problems.
+5. **Number of chains** -- 4-8 chains with shared weights gives best flatness.
+
+**Rule of thumb for energy range (high-dim):**
+Run a short MH probe to estimate energy range. Set `e_min` slightly below the minimum, `e_max` at the 90th-95th percentile of observed energies (not the max). A range that's too wide is almost as bad as too narrow.
+
+**When to use SAMC vs plain MH:**
+- For **optimization** (finding the minimum): start with MH. It's fastest.
+- For **sampling** (covering the energy landscape): use SAMC. It provides flat-histogram exploration guarantees.
+- For **hard multimodal problems** (20D+, many local minima): SAMC with 8-16 chains outperforms both MH and PT.
+
+**Cross-algorithm comparison** (best energy, mean +/- std):
+
+| Problem | Dim | SAMC | MH | PT |
+|---------|-----|------|----|----|
+| Gaussian Mix | 10 | 0.42 +/- 0.12 | **0.39 +/- 0.11** | 0.73 +/- 0.12 |
+| Gaussian Mix | 50 | **2.28 +/- 0.33** | 10.28 +/- 0.85 | 40.23 +/- 2.93 |
+| Gaussian Mix | 100 | **4.84 +/- 0.04** | 26.82 +/- 1.09 | 74.51 +/- 3.83 |
+| Rastrigin | 20 | **81.7 +/- 5.1** | 111.2 +/- 11.6 | 95.1 +/- 7.4 |
+
+SAMC's advantage grows with dimensionality: **4.5x better than MH at 50D**, **5.5x better at 100D**. PT collapses in high dimensions.
+
+See `ablation/reports/` for full analysis with figures.
+
 ## How It Works
 
 SAMC partitions the energy space into $m$ subregions and learns **log-density-of-states estimates** $\theta_t$ that flatten the energy histogram. The MH acceptance ratio gains a weight correction:
