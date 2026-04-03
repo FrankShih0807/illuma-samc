@@ -21,9 +21,14 @@ def _run_single_mh(
     x0: torch.Tensor | None,
     burn_in: int,
     save_every: int,
+    device: torch.device = torch.device("cpu"),
+    dtype: torch.dtype = torch.float32,
 ) -> dict:
     """Run a single MH chain. Internal helper."""
-    x = x0.clone() if x0 is not None else torch.randn(dim)
+    if x0 is not None:
+        x = x0.to(device=device, dtype=dtype).clone()
+    else:
+        x = torch.randn(dim, device=device, dtype=dtype)
     result = energy_fn(x)
     if isinstance(result, tuple):
         fx, _ = result
@@ -37,7 +42,7 @@ def _run_single_mh(
     samples = []
 
     for it in range(1, n_iters + 1):
-        y = x + proposal_std * torch.randn(dim)
+        y = x + proposal_std * torch.randn(dim, device=device, dtype=dtype)
         result = energy_fn(y)
         if isinstance(result, tuple):
             fy, in_r = result
@@ -73,8 +78,10 @@ def _run_single_mh(
         "best_energy": best_e,
         "best_x": best_x,
         "acceptance_rate": accept_count / n_iters,
-        "energies": torch.tensor(energies),
-        "samples": torch.stack(samples) if samples else torch.empty(0, dim),
+        "energies": torch.tensor(energies, device=device),
+        "samples": torch.stack(samples)
+        if samples
+        else torch.empty(0, dim, device=device, dtype=dtype),
     }
 
 
@@ -88,6 +95,8 @@ def run_mh(
     burn_in: int = 0,
     save_every: int = 1,
     n_chains: int = 1,
+    device: str | torch.device = "cpu",
+    dtype: torch.dtype = torch.float32,
 ) -> dict:
     """Run standard MH. Returns dict of metrics + samples.
 
@@ -98,17 +107,31 @@ def run_mh(
         When > 1, runs independent chains and reports the best result.
         ``energies`` uses the best chain's trace; ``samples`` from the
         best chain; ``acceptance_rate`` averaged across chains.
+    device : str or torch.device
+        Device for tensors. Default ``"cpu"``.
+    dtype : torch.dtype
+        Dtype for sample tensors. Default ``torch.float32``.
     """
+    dev = torch.device(device)
     if n_chains <= 1:
         return _run_single_mh(
-            energy_fn, dim, n_iters, proposal_std, temperature, x0, burn_in, save_every
+            energy_fn, dim, n_iters, proposal_std, temperature, x0, burn_in, save_every, dev, dtype
         )
 
     # Multi-chain: run independent chains, aggregate
     chains = []
     for c in range(n_chains):
         chain_result = _run_single_mh(
-            energy_fn, dim, n_iters, proposal_std, temperature, None, burn_in, save_every
+            energy_fn,
+            dim,
+            n_iters,
+            proposal_std,
+            temperature,
+            None,
+            burn_in,
+            save_every,
+            dev,
+            dtype,
         )
         chains.append(chain_result)
 

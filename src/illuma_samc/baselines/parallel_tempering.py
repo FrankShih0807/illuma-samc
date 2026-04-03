@@ -19,15 +19,25 @@ def run_parallel_tempering(
     burn_in: int = 0,
     save_every: int = 1,
     init_scale: float = 1.0,
+    device: str | torch.device = "cpu",
+    dtype: torch.dtype = torch.float32,
 ) -> dict:
     """Parallel tempering with geometric temperature ladder.
 
     Coldest replica runs at t_min (default 0.1 to match MH/SAMC temperature).
+
+    Parameters
+    ----------
+    device : str or torch.device
+        Device for tensors. Default ``"cpu"``.
+    dtype : torch.dtype
+        Dtype for sample tensors. Default ``torch.float32``.
     """
+    dev = torch.device(device)
     temps = torch.logspace(math.log10(t_min), math.log10(t_max), n_replicas)
 
     # Initialize replicas
-    states = [init_scale * torch.randn(dim) for _ in range(n_replicas)]
+    states = [init_scale * torch.randn(dim, device=dev, dtype=dtype) for _ in range(n_replicas)]
     energies_list: list[list[float]] = [[] for _ in range(n_replicas)]
 
     # Compute initial energies
@@ -50,7 +60,7 @@ def run_parallel_tempering(
     for it in range(1, n_iters + 1):
         # MH step for each replica
         for i in range(n_replicas):
-            y = states[i] + proposal_std * torch.randn(dim)
+            y = states[i] + proposal_std * torch.randn(dim, device=dev, dtype=dtype)
             result = energy_fn(y)
             if isinstance(result, tuple):
                 fy, in_r = result
@@ -101,6 +111,10 @@ def run_parallel_tempering(
         "best_x": best_x,
         "acceptance_rate": accept_counts[0] / n_iters,
         "swap_rate": swap_count / max(swap_attempts, 1),
-        "energies": torch.tensor(energies_list[0]),
-        "samples": (torch.stack(cold_samples) if cold_samples else torch.empty(0, dim)),
+        "energies": torch.tensor(energies_list[0], device=dev),
+        "samples": (
+            torch.stack(cold_samples)
+            if cold_samples
+            else torch.empty(0, dim, device=dev, dtype=dtype)
+        ),
     }
