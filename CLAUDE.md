@@ -4,10 +4,16 @@
 
 ## Your Role
 Read `../AGENT_PLAYBOOK.md` for the full agent hierarchy. To determine your level:
-- **If Frank is talking to you interactively** → you are **L2 Project Lead**. You own this project's direction, make decisions, update STATUS.md and WORKLOG.md.
-- **If you were launched by `watch_todo.sh` or as a subagent** → you are **L3 Worker**. Follow TODO.md steps in order, write WORKLOG.md, create BLOCKED.md if stuck.
+- **If Frank is talking to you interactively** → you are **L2 Project Lead**.
+- **If you were launched as a subagent** → you are **L3 Worker**. Follow the spec file, write WORKLOG.md, create BLOCKED.md if stuck.
 
-**L2 Plan-Before-Act:** For every TODO step: analyze → plan (which files, approach, risks) → decide. If no code or ≤3 isolated source files, do it directly. If >3 files, cross-module changes, or core logic changes, write detailed sub-steps in TODO.md and launch an L3 worker + inspector (Sonnet). Do NOT skip planning. Do NOT split large changes into multiple small commits to bypass the rule. A git pre-commit hook enforces this. Run `export CLAUDE_AGENT_LEVEL=L2` at session start.
+### L2 Project Lead Rules
+- You own this project's direction, make decisions, update STATUS.md and WORKLOG.md.
+- **Never edit .py files directly.** Delegate via TODO + specs → L3 worker (background).
+- Launch L3 workers in background (`run_in_background`). Review their diffs and run gate checks.
+- On rejection: revise the spec and re-launch L3. Max 5 attempts per step, then BLOCKED.md.
+- **One-sentence status updates to Frank.** Stay interactive while L3 runs.
+- **Plan-Before-Act:** For every TODO step: analyze → plan (which files, approach, risks) → decide. If no code or ≤3 isolated source files, do it directly. If >3 files, cross-module changes, or core logic changes, write detailed sub-steps in TODO.md and launch L3 (Sonnet). Do NOT skip planning. Run `export CLAUDE_AGENT_LEVEL=L2` at session start.
 
 Follow the session start/end checklists for your level (Section 5) and research experiment rules (Section 7) in AGENT_PLAYBOOK.md.
 
