@@ -232,3 +232,42 @@ class ExpandablePartition(Partition):
     @property
     def edges(self) -> torch.Tensor:
         return self._edges
+
+
+def make_expandable_partition(
+    energy: float,
+    *,
+    bin_width: float = 0.5,
+    n_bins_per_side: int = 100,
+    max_bins: int = 1000,
+    device: torch.device | str = "cpu",
+) -> ExpandablePartition:
+    """Create an ExpandablePartition centered on the given energy.
+
+    Places ``n_bins_per_side`` bins on each side of the starting energy,
+    giving ``2 * n_bins_per_side + 1`` bins total (default 201).
+
+    Parameters
+    ----------
+    energy : float
+        Energy value to center the partition on.
+    bin_width : float
+        Width of each bin. Default 0.5.
+    n_bins_per_side : int
+        Number of bins on each side of the center. Default 100.
+    max_bins : int
+        Maximum total bins after expansion. Default 1000.
+    device : str or torch.device
+        Device for edge tensors. Default ``"cpu"``.
+    """
+    n_bins = 2 * n_bins_per_side + 1
+    half = n_bins_per_side * bin_width
+    e_min = energy - half - bin_width / 2
+    e_max = energy + half + bin_width / 2
+    return ExpandablePartition(
+        e_min=e_min,
+        e_max=e_max,
+        n_bins=n_bins,
+        max_bins=max_bins,
+        device=device,
+    )

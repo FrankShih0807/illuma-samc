@@ -171,18 +171,12 @@ class SAMCWeights:
         Places ``n_bins_per_side`` bins on each side of the starting
         energy, giving ``2 * n_bins_per_side + 1`` bins total (default 201).
         """
-        from illuma_samc.partitions import ExpandablePartition
+        from illuma_samc.partitions import make_expandable_partition
 
-        n_side = self._n_bins_per_side
-        n_bins = 2 * n_side + 1
-        half = n_side * self._bin_width
-        e_min = energy - half - self._bin_width / 2
-        e_max = energy + half + self._bin_width / 2
-
-        self.partition = ExpandablePartition(
-            e_min=e_min,
-            e_max=e_max,
-            n_bins=n_bins,
+        self.partition = make_expandable_partition(
+            energy,
+            bin_width=self._bin_width,
+            n_bins_per_side=self._n_bins_per_side,
             max_bins=self._max_bins,
         )
         self._deferred_init = False
@@ -347,10 +341,11 @@ class SAMCWeights:
             if valid.any():
                 delta = self.gain(t)
                 valid_ks = ks[valid]
-                self.theta -= delta * self._refden * valid.sum().item()
-                for k in valid_ks:
-                    self.theta[k] += delta
-                    self.counts[k] += 1
+                n_valid = valid_ks.shape[0]
+                self.theta -= delta * self._refden * n_valid
+                ones = torch.ones(n_valid, dtype=self.theta.dtype)
+                self.theta.scatter_add_(0, valid_ks, ones * delta)
+                self.counts.scatter_add_(0, valid_ks, ones)
 
             # Track acceptance rate (skip for batched — not meaningful per-element)
             self._n_steps += 1

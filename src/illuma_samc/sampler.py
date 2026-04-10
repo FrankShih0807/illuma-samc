@@ -10,8 +10,9 @@ from typing import Callable
 import torch
 
 from illuma_samc.gain import GainSequence
-from illuma_samc.partitions import ExpandablePartition, Partition, UniformPartition
+from illuma_samc.partitions import Partition, UniformPartition
 from illuma_samc.proposals import GaussianProposal, Proposal
+from illuma_samc.weight_manager import SAMCWeights
 
 try:
     from tqdm import tqdm
@@ -275,18 +276,9 @@ class SAMC:
         Uses the same defaults as SAMCWeights: bin_width=0.5, 100 bins
         per side (201 total), max_bins=1000.
         """
-        bin_width = 0.5
-        n_bins_per_side = 100
-        n_bins = 2 * n_bins_per_side + 1
-        half = n_bins_per_side * bin_width
-        e_min = energy - half - bin_width / 2
-        e_max = energy + half + bin_width / 2
-        self._partition = ExpandablePartition(
-            e_min=e_min,
-            e_max=e_max,
-            n_bins=n_bins,
-            max_bins=1000,
-        )
+        from illuma_samc.partitions import make_expandable_partition
+
+        self._partition = make_expandable_partition(energy)
         self._deferred_partition = False
         self._n_partitions = self._partition.n_partitions
 
@@ -471,20 +463,14 @@ class SAMC:
                 stacklevel=3,
             )
 
-        # Theta (log weights) and counts — always on CPU (small vector, MPS lacks float64)
-        theta = torch.zeros(self._n_partitions, dtype=torch.float64)
-        counts = torch.zeros(self._n_partitions, dtype=torch.float64)
-        refden = 1.0 / self._n_partitions
-
-        def _sync_size() -> None:
-            """Grow theta/counts if the partition added bins."""
-            nonlocal theta, counts, refden
-            n = self._partition.n_partitions
-            if n > len(theta):
-                pad = n - len(theta)
-                theta = torch.cat([theta, torch.zeros(pad, dtype=theta.dtype)])
-                counts = torch.cat([counts, torch.zeros(pad, dtype=counts.dtype)])
-                refden = 1.0 / n
+        # Create SAMCWeights instance to manage theta/counts
+        wm = SAMCWeights(
+            partition=self._partition,
+            gain=self._gain,
+            device=device,
+            dtype=self._dtype,
+            record_every=save_every,
+        )
 
         best_x = x.clone()
         best_energy = fx_val
@@ -498,16 +484,15 @@ class SAMC:
             iterator = tqdm(iterator, desc="SAMC")
 
         for it in iterator:
-            delta = self._gain(it)
             k1 = self._partition.assign(fx)
-            _sync_size()
+            wm._maybe_resize()
 
             # Propose
             x_new = self._proposal.propose(x)
             fy, in_reg = self._compute_energy(x_new)
             fy_val = fy.item()
             k2 = self._partition.assign(fy)
-            _sync_size()
+            wm._maybe_resize()
 
             # Reject if proposal lands outside partition range
             if k2 < 0:
@@ -520,7 +505,11 @@ class SAMC:
                 # Current state out of range — always accept in-range proposals
                 log_r = float("inf") if k2 >= 0 else float("-inf")
             else:
-                log_r = theta[k1].item() - theta[k2].item() + (-fy_val + fx_val) / self._temperature
+                log_r = (
+                    wm.theta[k1].item()
+                    - wm.theta[k2].item()
+                    + (-fy_val + fx_val) / self._temperature
+                )
 
             # Proposal correction (for asymmetric proposals)
             if hasattr(self._proposal, "log_ratio"):
@@ -538,14 +527,11 @@ class SAMC:
                 x = x_new.clone()
                 fx = fy
                 fx_val = fy_val
-                theta -= delta * refden
-                theta[k2] += delta
-                counts[k2] += 1
                 accept_count += 1
-            elif k1 >= 0:
-                theta -= delta * refden
-                theta[k1] += delta
-                counts[k1] += 1
+
+            # Update weights: wm.step updates the bin the chain is currently in
+            # (fx_val is already updated to fy_val if accepted)
+            wm.step(it, fx_val)
 
             # Feed back to adaptive proposal
             if hasattr(self._proposal, "report_accept"):
@@ -562,6 +548,9 @@ class SAMC:
                 samples.append(x.clone())
                 sample_bins.append(cur_bin)  # keep -1 for out-of-range
 
+        theta = wm.theta
+        counts = wm.counts
+
         acc_rate = accept_count / n_steps
         self.log_weights = theta
         self.energy_history = energy_history
@@ -569,6 +558,7 @@ class SAMC:
         self.acceptance_rate = acc_rate
         self.best_x = best_x
         self.best_energy = best_energy
+        self._wm = wm
 
         if acc_rate < 0.01:
             warnings.warn(
@@ -717,11 +707,11 @@ class SAMC:
         save_every: int = 100,
         progress: bool = True,
     ) -> SAMCResult:
-        """Run N parallel chains with shared theta weights.
+        """Run N parallel chains with shared theta weights (population SAMC).
 
-        Proposals and energy evaluations are batched across chains.
-        Accept/reject and weight updates are sequential per chain to
-        maintain correctness of the shared theta vector.
+        Proposals, energy evaluations, accept/reject, and weight updates
+        are all batched across chains.  All chains see the same theta
+        snapshot each step — the standard population SAMC formulation.
         """
         device = self._device
         n_chains = x0.shape[0]
@@ -736,31 +726,24 @@ class SAMC:
             self._init_partition_from_energy(fx[0].item())
 
         # Warn if any initial state is out of partition range
-        for c in range(n_chains):
-            if self._partition.assign(fx[c]) < 0:
-                e_edges = self._partition.edges
-                warnings.warn(
-                    f"Initial energy {fx[c].item():.4g} is outside partition range "
-                    f"[{e_edges[0].item():.4g}, {e_edges[-1].item():.4g}]. "
-                    f"Chain may not mix.",
-                    stacklevel=3,
-                )
-                break  # one warning is enough
+        k_init = self._partition.assign_batch(fx)
+        if (k_init < 0).any():
+            e_edges = self._partition.edges
+            warnings.warn(
+                f"Some initial energies are outside partition range "
+                f"[{e_edges[0].item():.4g}, {e_edges[-1].item():.4g}]. "
+                f"Those chains may not mix.",
+                stacklevel=3,
+            )
 
-        # Shared theta on CPU (small vector, updated every step)
-        theta = torch.zeros(self._n_partitions, dtype=torch.float64)
-        counts = torch.zeros(self._n_partitions, dtype=torch.float64)
-        refden = 1.0 / self._n_partitions
-
-        def _sync_size() -> None:
-            """Grow theta/counts if the partition added bins."""
-            nonlocal theta, counts, refden
-            n = self._partition.n_partitions
-            if n > len(theta):
-                pad = n - len(theta)
-                theta = torch.cat([theta, torch.zeros(pad, dtype=theta.dtype)])
-                counts = torch.cat([counts, torch.zeros(pad, dtype=counts.dtype)])
-                refden = 1.0 / n
+        # Create SAMCWeights instance to manage theta/counts
+        wm = SAMCWeights(
+            partition=self._partition,
+            gain=self._gain,
+            device=device,
+            dtype=self._dtype,
+            record_every=save_every,
+        )
 
         best_x = x[0].clone()
         best_energy = fx.min().item()
@@ -774,84 +757,103 @@ class SAMC:
         accept_count = 0
         total_decisions = 0
 
+        has_log_ratio = hasattr(self._proposal, "log_ratio")
+        has_report_accept = hasattr(self._proposal, "report_accept")
+
         iterator = range(1, n_steps + 1)
         if progress and tqdm is not None:
             iterator = tqdm(iterator, desc=f"SAMC ({n_chains} chains)")
 
         for it in iterator:
-            delta = self._gain(it)
-
             # --- Batch propose across all chains ---
             x_new = self._proposal.propose(x)  # (N, dim)
 
             # --- Batch energy evaluation ---
             fy, in_reg = self._compute_energy_batch(x_new)  # (N,), (N,)
 
-            # --- Sequential accept/reject per chain (shared theta) ---
-            for c in range(n_chains):
-                fx_c = fx[c].item()
-                fy_c = fy[c].item()
-                k1 = self._partition.assign(fx[c])
-                _sync_size()
-                k2 = self._partition.assign(fy[c])
-                _sync_size()
+            # --- Batch bin assignment ---
+            k1 = self._partition.assign_batch(fx)  # (N,)
+            wm._maybe_resize()
+            k2 = self._partition.assign_batch(fy)  # (N,)
+            wm._maybe_resize()
 
-                in_reg_c = in_reg[c].item()
-                # Reject if proposal lands outside partition range
-                if k2 < 0:
-                    in_reg_c = False
+            # --- Batch log acceptance ratio ---
+            # Default: Boltzmann + SAMC correction
+            log_r = torch.full((n_chains,), float("-inf"), dtype=torch.float64)
 
-                # Log acceptance ratio
-                if self._log_accept_fn is not None:
-                    log_r = self._log_accept_fn(x[c], x_new[c], fx[c], fy[c])
-                elif k1 < 0:
-                    log_r = float("inf") if k2 >= 0 else float("-inf")
-                else:
-                    log_r = theta[k1].item() - theta[k2].item() + (-fy_c + fx_c) / self._temperature
+            k1_valid = k1 >= 0
+            k2_valid = k2 >= 0
+            both_valid = k1_valid & k2_valid
 
-                # Proposal correction (for asymmetric proposals)
-                if hasattr(self._proposal, "log_ratio"):
-                    log_r += self._proposal.log_ratio(x[c], x_new[c])
+            # Both bins valid: standard SAMC ratio
+            if both_valid.any():
+                log_r[both_valid] = (
+                    wm.theta[k1[both_valid]]
+                    - wm.theta[k2[both_valid]]
+                    + (-fy[both_valid].double() + fx[both_valid].double()) / self._temperature
+                )
 
-                # Accept/reject
-                if not in_reg_c:
-                    accept = False
-                elif log_r > 0:
-                    accept = True
-                else:
-                    accept = torch.rand(1).item() < math.exp(log_r)
+            # Current out of range but proposed in range: accept to get back
+            escape = (~k1_valid) & k2_valid
+            log_r[escape] = float("inf")
 
-                if accept:
-                    x[c] = x_new[c]
-                    fx[c] = fy[c]
-                    theta -= delta * refden
-                    theta[k2] += delta
-                    counts[k2] += 1
-                    accept_count += 1
-                elif k1 >= 0:
-                    theta -= delta * refden
-                    theta[k1] += delta
-                    counts[k1] += 1
+            # Both out of range: -inf (reject)
+            # k1 valid but k2 invalid: -inf (reject) — already set
 
-                # Feed back to adaptive proposal
-                if hasattr(self._proposal, "report_accept"):
-                    self._proposal.report_accept(accept)
+            # Reject if proposal is outside region
+            log_r[~in_reg] = float("-inf")
+            log_r[~k2_valid] = float("-inf")
 
-                total_decisions += 1
+            # Custom log_accept_fn overrides (per-chain, falls back to loop)
+            if self._log_accept_fn is not None:
+                for c in range(n_chains):
+                    log_r[c] = self._log_accept_fn(x[c], x_new[c], fx[c], fy[c])
 
-                if fx[c].item() < best_energy:
-                    best_energy = fx[c].item()
-                    best_x = x[c].clone()
+            # Proposal correction for asymmetric proposals
+            if has_log_ratio:
+                for c in range(n_chains):
+                    log_r[c] += self._proposal.log_ratio(x[c], x_new[c])
+
+            # --- Batch accept/reject ---
+            accept_mask = (log_r > 0) | (
+                torch.rand(n_chains).double() < torch.exp(log_r.clamp(max=0.0))
+            )
+            # Force reject for out-of-region proposals
+            accept_mask &= in_reg & k2_valid
+
+            n_accepted = accept_mask.sum().item()
+            accept_count += n_accepted
+            total_decisions += n_chains
+
+            # --- Update states ---
+            x[accept_mask] = x_new[accept_mask]
+            fx[accept_mask] = fy[accept_mask]
+
+            # --- Batch weight update via SAMCWeights ---
+            # fx is already updated for accepted chains, so wm.step updates the
+            # bin each chain is currently in (k2 for accepted, k1 for rejected).
+            wm.step(it, fx)
+
+            # Feed back to adaptive proposal (aggregate acceptance rate)
+            if has_report_accept:
+                for c in range(n_chains):
+                    self._proposal.report_accept(bool(accept_mask[c]))
+
+            # Track best
+            step_min_idx = fx.argmin().item()
+            if fx[step_min_idx].item() < best_energy:
+                best_energy = fx[step_min_idx].item()
+                best_x = x[step_min_idx].clone()
 
             # Store per-step energy for all chains
             energy_history.append(fx.clone().cpu())
 
             if it % save_every == 0:
                 samples.append(x.clone())  # (N, dim)
-                sample_bins_per_step.append(
-                    [self._partition.assign(fx[c]) for c in range(n_chains)]
-                )
+                sample_bins_per_step.append(self._partition.assign_batch(fx).tolist())
 
+        theta = wm.theta
+        counts = wm.counts
         acc_rate = accept_count / total_decisions if total_decisions > 0 else 0.0
 
         self.log_weights = theta  # stays on CPU (float64, MPS-safe)
@@ -860,6 +862,7 @@ class SAMC:
         self.acceptance_rate = acc_rate
         self.best_x = best_x
         self.best_energy = best_energy
+        self._wm = wm
 
         if acc_rate < 0.01:
             warnings.warn(
@@ -883,9 +886,7 @@ class SAMC:
             # (n_saved, N)
             bin_idx = torch.tensor(sample_bins_per_step, dtype=torch.long)
             in_range = bin_idx >= 0
-            sample_log_w = torch.full_like(
-                bin_idx, float("-inf"), dtype=self._dtype, device=device
-            )
+            sample_log_w = torch.full_like(bin_idx, float("-inf"), dtype=self._dtype, device=device)
             if in_range.any():
                 valid_bins = bin_idx[in_range]
                 visited_mask = counts[valid_bins] > 0
@@ -894,9 +895,7 @@ class SAMC:
                 visited_flat = in_range_flat[visited_mask]
                 for idx in visited_flat:
                     r, c = idx[0].item(), idx[1].item()
-                    sample_log_w[r, c] = theta[bin_idx[r, c]].to(
-                        device=device, dtype=self._dtype
-                    )
+                    sample_log_w[r, c] = theta[bin_idx[r, c]].to(device=device, dtype=self._dtype)
             sample_log_w = sample_log_w.permute(1, 0)  # (N, n_saved)
         else:
             sample_log_w = torch.empty(n_chains, 0, device=device, dtype=self._dtype)
